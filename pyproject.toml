@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "surface_renewal"
+version = "0.1.0"
+description = "Surface renewal & micrometeorological fluxes: preprocessing, SR methods, and QA/QC"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{name="Your Name", email="you@example.com"}]
+license = {text = "MIT"}
+dependencies = [
+  "numpy>=1.22",
+  "scipy>=1.10",
+  "pandas>=2.0",
+  "xarray>=2023.1.0",
+  "numba>=0.58",
+  "pyarrow>=12.0",
+  "matplotlib>=3.8"
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = ["surface_renewal"]
+
+[tool.setuptools.package-data]
+surface_renewal = ["py.typed"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-q"
+pythonpath = ["src"]

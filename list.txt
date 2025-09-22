@@ -1,0 +1,16 @@
+1-s2.0-016819239402182J-main.pdf (AFM, 1994)
+The foundational surface-renewal paper (ramp structure, energy-budget link). It gives you the core theory your classes and unit tests should encode.
+
+1-s2.0-S0168192396024203-main.pdf (AFM, 1996)
+Key algorithmic refinements to detect/fit ramps and estimate exchange coefficients—exactly what you need to implement the Snyder-style cubic ramp solver and windowing logic.
+
+Snyderetal_2008_PastureET.pdf (2008)
+A practical ET application/validation of surface renewal. Great for turning theory into robust defaults, calibration routines, and regression tests against published numbers.
+
+amt-2017-123-manuscript-version3.pdf (AMT, ~2017)
+Modern treatment of processing/QA (sampling rates, filtering, despiking, stability, comparators vs EC). Use it to design your pipeline (I/O schema, QC flags, stability screens).
+
+jove-82-50666.pdf (JoVE methods article)
+Step-by-step methodology with implementation-friendly detail (signal handling, window lengths, parameter choices). Perfect to translate into docstrings, examples, and a tutorial notebook.
+
+1-s2.0-S0168192321002847-main.pdf
