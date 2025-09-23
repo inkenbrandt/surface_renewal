@@ -185,30 +185,19 @@ def stability_ok(
 
     # u* and variance checks
     if not np.isfinite(u_star) or u_star < min_ustar:
-        return _mark_pass(diag, False)
+        return False
     if not np.isfinite(stdT) or stdT < min_stdT:
-        return _mark_pass(diag, False)
+        return False
 
     # Relative S3 (dimensionless)
     if not np.isfinite(S3_tau) or stdT <= 0:
-        return _mark_pass(diag, False)
+        return False
     rel_S3 = abs(S3_tau) / (stdT ** 3)
     if rel_S3 < min_rel_S3:
-        return _mark_pass(diag, False)
+        return False
 
     # Optional daytime filter
     if daytime_only and (Rn_block is not None) and not (Rn_block > 0):
-        return _mark_pass(diag, False)
+        return False
 
-    return _mark_pass(diag, True)
-
-
-# ------------------------------- Internals --------------------------------- #
-
-def _mark_pass(diag: BlockDiagnostics | Dict[str, Any], val: bool) -> bool:
-    """Set diag.passed when possible and return the value."""
-    if isinstance(diag, BlockDiagnostics):
-        diag.passed = val
-    else:
-        diag["passed"] = val  # harmless if dict
-    return val
+    return True
