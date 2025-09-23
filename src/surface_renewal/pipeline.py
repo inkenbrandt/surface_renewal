@@ -180,6 +180,7 @@ def _compute_block_flux(
         daytime_only=cfg.daytime_only,
         Rn_block=Rn_blk,
     )
+    diag.passed = passed
 
     # Compute uncalibrated H via selected SR method
     if cfg.method == "snyder":
