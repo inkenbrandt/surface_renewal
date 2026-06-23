@@ -63,7 +63,9 @@ def build_planar_fit_matrix(u: np.ndarray, v: np.ndarray, w: np.ndarray) -> Tupl
 
     This implements a standard planar-fit approach:
     1. Fit a plane ``w = a + b*u + c*v`` via least squares.
-    2. The plane's unit normal is proportional to ``n = (b, c, -1)``.
+    2. The plane's upward unit normal is proportional to ``n = (-b, -c, +1)``
+       (the gradient of ``b*u + c*v - w + a`` is ``(b, c, -1)``; negating it
+       gives the normal whose vertical component points up).
     3. Define the new vertical axis ``k'`` as the plane normal (upward).
     4. Define the new streamwise axis ``x'`` as the projection of the mean wind
        onto the plane.
@@ -98,9 +100,14 @@ def build_planar_fit_matrix(u: np.ndarray, v: np.ndarray, w: np.ndarray) -> Tupl
     beta, *_ = np.linalg.lstsq(X, w0, rcond=None)
     a, b, c = beta
 
-    # Plane unit normal (upward): proportional to (b, c, -1)
-    n = np.array([b, c, -1.0], dtype=float)
+    # Plane unit normal (upward): proportional to (-b, -c, +1) so that the
+    # rotated vertical axis k' points up (positive z-component).
+    n = np.array([-b, -c, 1.0], dtype=float)
     k_prime = _normalize(n)
+    # Invariant: the planar-fit vertical axis must point upward. The (-b, -c, 1)
+    # construction guarantees this for any finite tilt (the +1 dominates after
+    # normalization); assert it so a future regression is caught immediately.
+    assert k_prime[2] > 0.0, f"planar-fit vertical axis points down: k'={k_prime}"
 
     # Mean wind vector
     U_mean = np.array([np.nanmean(u), np.nanmean(v), np.nanmean(w)], dtype=float)

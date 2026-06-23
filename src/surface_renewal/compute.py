@@ -22,6 +22,11 @@ class ComputeConfig:
     ----------
     fs : float
         Sampling frequency in Hz (e.g., 10 or 20).
+    z : float
+        Measurement height (m), i.e., the V/A volume-to-area ratio. Required by the
+        Snyder ideal-SR flux so that H has units of W m⁻².
+    alpha : float, default 1.0
+        Dimensionless SR weighting factor (~0.5–1.0); 1.0 is "ideal SR".
     block : str, default "30min"
         Time-averaging period for SR fluxes.
     method : {"snyder","chen97"}, default "snyder"
@@ -49,8 +54,18 @@ class ComputeConfig:
     stability_stdT : float, default 0.02
     daytime_only : bool, default False
         If True and Rn is available, require Rn>0 to accept block.
+    d : float, default 0.0
+        Zero-plane displacement height (m). Chen97 geometric scaling.
+    h : float or None, default None
+        Canopy height (m). Chen97 roughness-sublayer scaling.
+    z_star : float or None, default None
+        Roughness-sublayer top (m). Chen97; defaults to ``h`` (or 0.0).
+    a_comb : float, default 0.4
+        Chen97 combined coefficient ``alpha*beta**(2/3)*gamma`` (~0.4).
     """
     fs: float
+    z: float
+    alpha: float = 1.0
     block: str = "30min"
     method: MethodName = "snyder"
     rotation: RotationMode = "planar_fit"
@@ -69,10 +84,18 @@ class ComputeConfig:
     stability_stdT: float = 0.02
     daytime_only: bool = False
 
+    # Chen97 geometric-scaling parameters
+    d: float = 0.0
+    h: Optional[float] = None
+    z_star: Optional[float] = None
+    a_comb: float = 0.4
+
     def to_pipeline_config(self) -> PipelineConfig:
         """Translate to the canonical :class:`PipelineConfig`."""
         return PipelineConfig(
             fs=self.fs,
+            z=self.z,
+            alpha=self.alpha,
             block=self.block,
             method=self.method,
             rotation=self.rotation,
@@ -88,6 +111,10 @@ class ComputeConfig:
             stability_relS3=self.stability_relS3,
             stability_stdT=self.stability_stdT,
             daytime_only=self.daytime_only,
+            d=self.d,
+            h=self.h,
+            z_star=self.z_star,
+            a_comb=self.a_comb,
         )
 
 
@@ -127,6 +154,8 @@ def _build_argparser():
     )
     p.add_argument("input", help="Path to CSV/Parquet with high-frequency data.")
     p.add_argument("--fs", type=float, required=True, help="Sampling frequency (Hz).")
+    p.add_argument("--z", type=float, required=True, help="Measurement height (m), the V/A volume-to-area ratio.")
+    p.add_argument("--alpha", type=float, default=1.0, help="SR weighting factor (default 1.0 = ideal SR).")
     p.add_argument("--block", default="30min", help="Block period, e.g. 30min.")
     p.add_argument("--method", choices=["snyder", "chen97"], default="snyder")
     p.add_argument("--rotation", choices=["planar_fit", "double", "none"], default="planar_fit")
@@ -145,6 +174,11 @@ def _build_argparser():
     p.add_argument("--min-stdT", type=float, default=0.02)
     p.add_argument("--daytime-only", action="store_true")
 
+    p.add_argument("--d", type=float, default=0.0, help="Zero-plane displacement height (m); Chen97.")
+    p.add_argument("--h", type=float, default=None, help="Canopy height (m); Chen97 roughness sublayer.")
+    p.add_argument("--z-star", type=float, default=None, help="Roughness-sublayer top (m); Chen97.")
+    p.add_argument("--a-comb", type=float, default=0.4, help="Chen97 combined coefficient (~0.4).")
+
     p.add_argument("--time-col", default=None, help="Name of timestamp column if needed.")
     p.add_argument("--out", default=None, help="Optional output Parquet/CSV path.")
     return p
@@ -153,6 +187,8 @@ def _build_argparser():
 def _to_cfg(ns) -> ComputeConfig:
     return ComputeConfig(
         fs=ns.fs,
+        z=ns.z,
+        alpha=ns.alpha,
         block=ns.block,
         method=ns.method,
         rotation=ns.rotation,
@@ -168,6 +204,10 @@ def _to_cfg(ns) -> ComputeConfig:
         stability_relS3=ns.min_relS3,
         stability_stdT=ns.min_stdT,
         daytime_only=ns.daytime_only,
+        d=ns.d,
+        h=ns.h,
+        z_star=ns.z_star,
+        a_comb=ns.a_comb,
     )
 
 

@@ -15,7 +15,8 @@ class SnyderResult(NamedTuple):
     tau : float
         Mean time between ramps τ (s).
     H : float
-        Uncalibrated sensible heat flux (W m⁻²). Apply block-scale calibration later.
+        Sensible heat flux (W m⁻²), already scaled by measurement height z and the
+        weighting factor alpha. Apply any further block-scale calibration later.
     dt_opt : float
         Optimal lag Δt* (s) used to evaluate S2, S3, S5.
     """
@@ -84,6 +85,8 @@ def estimate_H_snyder(
     T: np.ndarray,
     *,
     hz: float,
+    z: float,
+    alpha: float = 1.0,
     rho: float = 1.2,
     cp: float = 1005.0,
     lags_s: tuple[float, float] = (0.2, 8.0),
@@ -98,10 +101,16 @@ def estimate_H_snyder(
            A^3 + p A + q = 0,
        with
            p = 10·S2  −  (S5 / S3),    q = 10·S3    (evaluated at Δt*).
-    4) Select **A** as the **maximum real root**.
+    4) Select **A** as the real root with the **largest absolute value** (the
+       "magnitude of the real root" rule; AMT 2018). For stable/nighttime blocks
+       S3 > 0 and the physical amplitude is negative, so a plain max() would pick
+       the wrong sign and yield τ < 0.
     5) Recover τ from the model relation:
            τ = − (A^3) · Δt* / S3(Δt*).
-    6) Compute H = ρ c_p (A / τ).  (Apply block-scale calibration downstream.)
+    6) Compute the ideal surface-renewal flux (Paw U et al. 1995 Eq. 1;
+       Mengistu & Savage 2010 Eq. 4):
+           H = alpha · ρ · c_p · (A / τ) · z.
+       (Apply any further block-scale calibration downstream.)
 
     Parameters
     ----------
@@ -109,6 +118,12 @@ def estimate_H_snyder(
         High-frequency temperature series (K or °C after normalization).
     hz : float
         Sampling frequency (Hz), e.g., 10 or 20 Hz.
+    z : float
+        Measurement height (m), i.e., the V/A volume-to-area ratio. Required so
+        that H carries units of W m⁻² rather than W m⁻³.
+    alpha : float, default 1.0
+        Dimensionless weighting factor (~0.5–1.0). The default of 1.0 corresponds
+        to "ideal SR"; fit a site/period value against reference EC if desired.
     rho : float, default 1.2
         Air density (kg m⁻³).
     cp : float, default 1005.0
@@ -123,9 +138,9 @@ def estimate_H_snyder(
 
     Notes
     -----
-    - The implementation follows your current draft (S2/S3/S5, cubic coefficients,
-      maximum real root choice, τ relation, H scaling). Keep an external, site/period
-      calibration (alpha) to reconcile H with EC where desired.
+    - The implementation follows S2/S3/S5, cubic coefficients, the
+      largest-magnitude real-root choice, the τ relation, and H scaling by alpha,
+      ρ c_p, and z. Refine alpha against reference EC at the block scale where desired.
     """
     T = np.asarray(T, float)
     n = T.size
@@ -162,17 +177,19 @@ def estimate_H_snyder(
     if roots.size == 0:
         return SnyderResult(A=np.nan, tau=np.nan, H=np.nan, dt_opt=dt_opt)
 
-    # Practice in Snyder/Chen implementations: take the maximum real root
-    A = float(np.max(roots))
+    # Select the real root of largest magnitude (AMT 2018): preserves the correct
+    # sign of the amplitude for stable (S3 > 0) blocks, where it is negative.
+    A = float(roots[np.argmax(np.abs(roots))])
 
     # Recover τ; must be positive and finite
     tau = - (A ** 3) * dt_opt / S3
     if not (np.isfinite(tau) and (tau > 0.0)):
         return SnyderResult(A=np.nan, tau=np.nan, H=np.nan, dt_opt=dt_opt)
 
-    # Sensible heat (uncalibrated).  Calibrate later at block scale if desired.
+    # Ideal surface-renewal sensible heat, scaled by measurement height z and the
+    # weighting factor alpha:  H = alpha · ρ · c_p · (A / τ) · z   [W m⁻²].
     dTdt = A / tau
-    H = rho * cp * dTdt
+    H = alpha * rho * cp * dTdt * z
 
     return SnyderResult(A=A, tau=float(tau), H=float(H), dt_opt=dt_opt)
 
@@ -199,7 +216,7 @@ def solve_ramp_from_structure(S2: float, S3: float, S5: float) -> Tuple[float, f
     -----
     This helper simply wraps the Cardano solve and τ relation for already-
     computed (S2, S3, S5).  It mirrors the same equations used in
-    `estimate_H_snyder`.
+    `estimate_H_snyder`, including the largest-magnitude real-root selection.
     """
     if not (np.isfinite(S2) and np.isfinite(S3) and np.isfinite(S5)) or S3 == 0.0:
         return np.nan, np.nan
@@ -211,6 +228,6 @@ def solve_ramp_from_structure(S2: float, S3: float, S5: float) -> Tuple[float, f
     if roots.size == 0:
         return np.nan, np.nan
 
-    A = float(np.max(roots))
+    A = float(roots[np.argmax(np.abs(roots))])
     tau = - (A ** 3) * 1.0 / S3  # here Δt*=1 by construction; scale externally if needed
     return (A, tau if np.isfinite(tau) and (tau > 0.0) else np.nan)

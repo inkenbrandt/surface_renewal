@@ -1,24 +1,27 @@
 # src/surface_renewal/methods/chen97.py
 from __future__ import annotations
 
-from typing import NamedTuple, Literal, Tuple
+from typing import NamedTuple, Literal, Optional, Tuple
 import numpy as np
 
 RotationMode = Literal["none", "double", "planar_fit"]
 
 
 class ChenResult(NamedTuple):
-    """Results for Chen (1997)-style SR sensible heat estimation.
+    """Results for Chen (1997b)-style SR sensible heat estimation.
 
     Attributes
     ----------
     tau_opt : float
-        Optimal lag τ* in seconds (selected from a bounded scan).
+        Optimal lag ``r_m`` in seconds (selected from a bounded scan via Chen's
+        ``r_m`` criterion).
     S3_tau : float
-        Third-order temperature structure function evaluated at τ*.
+        Third-order temperature structure function evaluated at ``r_m``.
     H : float
-        Uncalibrated sensible heat flux (W m⁻²). Apply block-scale alpha
-        calibration downstream when matching to a reference (e.g., EC H).
+        Sensible heat flux (W m⁻²) from the Chen et al. (1997b) formula
+        (Mengistu & Savage 2010 Eq. 12). Positive for unstable (S3 < 0),
+        negative for stable (S3 > 0). A block-scale calibration may still be
+        applied downstream when matching to a reference (e.g., EC H).
     """
     tau_opt: float
     S3_tau: float
@@ -140,7 +143,68 @@ def estimate_friction_velocity(u: np.ndarray, v: np.ndarray, w: np.ndarray, rota
 
 
 # --------------------------------------------------------------------------- #
-# Chen (1997) sensible heat (uncalibrated) from S3(τ*) and u*
+# Geometric (sublayer) scaling factor G
+# --------------------------------------------------------------------------- #
+
+def _geometric_scaling(
+    z: float,
+    d: float,
+    h: Optional[float],
+    z_star: Optional[float],
+) -> Tuple[float, str]:
+    """Return the geometric scaling factor G and the sublayer it assumes.
+
+    Chen et al. (1997b) / Mengistu & Savage (2010) Eq. 12 scale the
+    structure-function flux by a height-dependent geometric factor that differs
+    between the inertial and roughness sublayers:
+
+    * Inertial sublayer (measurement well above the canopy, ``z - d > z*``)::
+
+          G = z / (z - d) ** (2/3)
+
+    * Roughness sublayer (measurement within ``z*`` of the canopy)::
+
+          G = z / h ** (2/3)
+
+    Parameters
+    ----------
+    z : float
+        Measurement height (m).
+    d : float
+        Zero-plane displacement height (m).
+    h : float or None
+        Canopy height (m). Required only in the roughness-sublayer branch.
+    z_star : float or None
+        Roughness-sublayer top (m). If None it defaults to ``h`` (when given) or
+        ``0.0``, so an open/bare surface defaults to the inertial-sublayer form.
+
+    Returns
+    -------
+    (G, sublayer) : (float, str)
+        The geometric factor and which sublayer (``"inertial"`` /
+        ``"roughness"``) it assumes.
+    """
+    zeta = z - d
+    if z_star is None:
+        z_star = h if h is not None else 0.0
+
+    if zeta > z_star:
+        if not (zeta > 0.0):
+            raise ValueError(
+                f"inertial-sublayer scaling requires z - d > 0; got z={z}, d={d}"
+            )
+        return z / (zeta ** (2.0 / 3.0)), "inertial"
+
+    if h is None or not (h > 0.0):
+        raise ValueError(
+            "roughness-sublayer scaling requires a positive canopy height h; "
+            f"got h={h} for z={z}, d={d}, z_star={z_star}"
+        )
+    return z / (h ** (2.0 / 3.0)), "roughness"
+
+
+# --------------------------------------------------------------------------- #
+# Chen (1997b) sensible heat from S3(r_m), u*, and the geometric factor
 # --------------------------------------------------------------------------- #
 
 def estimate_H_chen(
@@ -150,12 +214,34 @@ def estimate_H_chen(
     w: np.ndarray,
     *,
     hz: float,
+    z: float,
+    d: float = 0.0,
+    h: Optional[float] = None,
+    z_star: Optional[float] = None,
     rho: float = 1.2,
     cp: float = 1005.0,
-    beta: float = 1.0,
+    a_comb: float = 0.4,
     rotation: RotationMode = "planar_fit",
 ) -> ChenResult:
-    """Estimate uncalibrated sensible heat flux using a Chen97-style SR scaling.
+    """Estimate sensible heat flux using the Chen et al. (1997b) SR formula.
+
+    Implements Mengistu & Savage (2010) Eq. 12::
+
+        H = -a_comb * rho * cp * (S3(r_m) / r_m) ** (1/3) * u_star ** (2/3) * G
+
+    where ``r_m`` (s) is the optimal lag selected by Chen's ``r_m`` criterion
+    (:func:`~surface_renewal.structure.pick_optimal_lag`, which maximises
+    ``-(S3/r)**(1/3)``), ``S3(r_m)`` is the third-order temperature structure
+    function at that lag, ``u_star`` is the friction velocity (note the **2/3**
+    exponent), and ``G`` is the height-dependent geometric scaling
+    (:func:`_geometric_scaling`).
+
+    Sign convention
+    ---------------
+    ``np.cbrt`` is a *signed* cube root, so ``(S3 / r_m) ** (1/3)`` keeps the
+    sign of ``S3``. Together with the leading minus sign this makes ``H`` come
+    out **positive for unstable** stratification (``S3 < 0``, daytime up-ramps)
+    and **negative for stable** stratification (``S3 > 0``).
 
     Parameters
     ----------
@@ -165,27 +251,34 @@ def estimate_H_chen(
         Wind components (m s⁻¹), aligned with T.
     hz : float
         Sampling frequency (Hz), e.g., 10 or 20 Hz.
+    z : float
+        Measurement height (m).
+    d : float, default 0.0
+        Zero-plane displacement height (m).
+    h : float, optional
+        Canopy height (m). Required only when the measurement falls in the
+        roughness sublayer (``z - d <= z_star``).
+    z_star : float, optional
+        Roughness-sublayer top (m). If None, defaults to ``h`` (if given) else
+        ``0.0`` so that an open/bare surface uses the inertial-sublayer scaling.
     rho : float, default 1.2
         Air density (kg m⁻³). (You can compute this per-block via ideal gas law.)
     cp : float, default 1005.0
         Specific heat of air at constant pressure (J kg⁻¹ K⁻¹).
-    beta : float, default 1.0
-        Dimensionless coefficient (absorbed later by block-scale calibration).
+    a_comb : float, default 0.4
+        Combined coefficient ``alpha * beta**(2/3) * gamma`` (~0.4 per Chen et
+        al. 1997b).
     rotation : {"none", "double", "planar_fit"}, default "planar_fit"
-        Rotation used for u* computation.
+        Rotation used for the u* computation.
 
     Returns
     -------
     ChenResult
-        Named tuple with (tau_opt[s], S3_tau, H[W m⁻²]).
+        Named tuple ``(tau_opt[s] = r_m, S3_tau = S3(r_m), H[W m⁻²])``.
 
     Notes
     -----
-    - Lags τ are scanned over a bounded window (default 0.2–8 s) to locate τ*
-      using a reproducible rule (e.g., argmax |S3(τ)| / τ).
-    - The uncalibrated scaling uses u* and S3(τ*) with a dimensional form; in
-      practice, apply an **alpha** calibration factor at the block level to
-      match an EC reference for H.
+    Lags are scanned over a bounded window (default 0.2–8 s) to locate ``r_m``.
     """
     T = np.asarray(T, float)
 
@@ -199,16 +292,21 @@ def estimate_H_chen(
 
     S = structure_functions(T, lags, orders=[3])       # {3: S3(lag)}
     k_opt = pick_optimal_lag(S[3], lags)
-    tau = float(k_opt) / float(hz)
+    r_m = float(k_opt) / float(hz)                      # optimal lag in seconds
     # index of k_opt within lags
-    S3_tau = float(S[3][int(np.where(lags == k_opt)[0][0])])  # matches your approach. :contentReference[oaicite:7]{index=7}
+    S3_rm = float(S[3][int(np.where(lags == k_opt)[0][0])])
 
     # u* from rotated covariances
     ustar = estimate_friction_velocity(u, v, w, rotation=rotation)
 
-    # Dimensional Chen-like scaling (left to be refined by alpha calibration)
-    # Guard divisions; keep sign of S3
-    tau_term = (tau ** (2.0 / 3.0)) if tau > 0 else np.nan
-    H_uncal = rho * cp * beta * ustar * np.cbrt(abs(S3_tau)) * np.sign(S3_tau) / (tau_term + 1e-12)
+    # Geometric (sublayer) scaling factor G
+    G, _sublayer = _geometric_scaling(z, d, h, z_star)
 
-    return ChenResult(tau_opt=tau, S3_tau=S3_tau, H=float(H_uncal))  # unchanged semantics. :contentReference[oaicite:8]{index=8}
+    # Chen (1997b) / Mengistu & Savage (2010) Eq. 12.
+    # The signed cube root preserves the sign of S3; the leading minus then
+    # yields H > 0 for unstable (S3 < 0) and H < 0 for stable (S3 > 0).
+    if not (r_m > 0.0):
+        return ChenResult(tau_opt=r_m, S3_tau=S3_rm, H=np.nan)
+    H = -a_comb * rho * cp * np.cbrt(S3_rm / r_m) * (ustar ** (2.0 / 3.0)) * G
+
+    return ChenResult(tau_opt=r_m, S3_tau=S3_rm, H=float(H))

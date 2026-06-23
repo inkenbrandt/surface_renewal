@@ -30,6 +30,11 @@ class PipelineConfig:
     ----------
     fs : float
         Sampling frequency in Hz (e.g., 10 or 20).
+    z : float
+        Measurement height (m), i.e., the V/A volume-to-area ratio. Required by the
+        Snyder ideal-SR flux so that H has units of W m⁻² rather than W m⁻³.
+    alpha : float, default 1.0
+        Dimensionless SR weighting factor (~0.5–1.0); 1.0 is "ideal SR".
     block : str, default "30min"
         Time-averaging period for SR fluxes (pandas offset alias).
     method : {"snyder", "chen97"}, default "snyder"
@@ -60,8 +65,18 @@ class PipelineConfig:
         Minimum std(T) (K) to accept a block.
     daytime_only : bool, default False
         If True, require Rn>0 (only matters if Rn provided).
+    d : float, default 0.0
+        Zero-plane displacement height (m). Chen97 geometric scaling.
+    h : float or None, default None
+        Canopy height (m). Chen97 roughness-sublayer scaling.
+    z_star : float or None, default None
+        Roughness-sublayer top (m). Chen97; defaults to ``h`` (or 0.0).
+    a_comb : float, default 0.4
+        Chen97 combined coefficient ``alpha*beta**(2/3)*gamma`` (~0.4).
     """
     fs: float
+    z: float
+    alpha: float = 1.0
     block: str = "30min"
     method: MethodName = "snyder"
     rotation: Literal["planar_fit", "double", "none"] = "planar_fit"
@@ -79,6 +94,12 @@ class PipelineConfig:
     stability_relS3: float = 1e-3
     stability_stdT: float = 0.02
     daytime_only: bool = False
+
+    # Chen97 geometric-scaling parameters
+    d: float = 0.0
+    h: Optional[float] = None
+    z_star: Optional[float] = None
+    a_comb: float = 0.4
 
 
 def _ensure_df(
@@ -184,7 +205,7 @@ def _compute_block_flux(
     # Compute uncalibrated H via selected SR method
     if cfg.method == "snyder":
         sres: SnyderResult = estimate_H_snyder(
-            grp["T"].to_numpy(float), hz=hz, rho=rho, cp=cp
+            grp["T"].to_numpy(float), hz=hz, z=cfg.z, alpha=cfg.alpha, rho=rho, cp=cp
         )  # Snyder uses S2/S3/S5 + Cardano; no u* term  :contentReference[oaicite:5]{index=5}
         H_uncal = sres.H
         tau_star = sres.tau
@@ -196,10 +217,11 @@ def _compute_block_flux(
             u=grp["u"].to_numpy(float),
             v=grp["v"].to_numpy(float),
             w=grp["w"].to_numpy(float),
-            hz=hz, rho=rho, cp=cp,
+            hz=hz, z=cfg.z, d=cfg.d, h=cfg.h, z_star=cfg.z_star,
+            rho=rho, cp=cp, a_comb=cfg.a_comb,
             rotation=("planar_fit" if cfg.rotation == "planar_fit" else
                       "double" if cfg.rotation == "double" else "none"),
-        )  # Chen uses S3(τ*), u*, τ*  :contentReference[oaicite:6]{index=6}
+        )  # Chen (1997b) Eq.12: S3(r_m), u*^(2/3), geometric factor G
         H_uncal = cres.H
         tau_star = cres.tau_opt
         dt_opt = cres.tau_opt  # τ* is the selected lag here
@@ -213,10 +235,12 @@ def _compute_block_flux(
         if np.isfinite(H_uncal):
             LE = Rn_blk - G_blk - H_uncal
 
-    # Friction velocity (from rotated covariances)
-    ustar_val = float(
-        friction_velocity(grp.rename(columns={"u": "u_r", "v": "v_r", "w": "w_r"}), method="global")
-    )
+    # Friction velocity from the rotated covariances produced in preprocessing.
+    # The block already carries the rotated columns (u_r, v_r, w_r) from
+    # planar_fit, so use them directly — renaming u/v/w to u_r/v_r/w_r here would
+    # create duplicate column labels and break the lookup. `friction_velocity`
+    # returns a length-1 Series for method="global"; take the scalar.
+    ustar_val = float(friction_velocity(grp, method="global").iloc[0])
 
     return {
         "passed": bool(passed),
