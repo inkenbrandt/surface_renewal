@@ -36,17 +36,52 @@ def structure_functions(
     -------
     dict[int, np.ndarray]
         Map order -> array of S_order at each lag in the same order.
+
+    Examples
+    --------
+    The vectorized computation matches the naive per-lag loop:
+
+    >>> import numpy as np
+    >>> t = np.arange(200.0)          # linear ramp
+    >>> T = np.sin(t / 7.0) + 0.1 * t  # smooth-ish synthetic signal
+    >>> lg = [1, 2, 3, 5, 8, 13]
+    >>> fast = structure_functions(T, lg, orders=(2, 3, 5))
+    >>> ref = {p: np.array(
+    ...     [np.nanmean(np.abs(T[k:] - T[:-k]) ** p) if p % 2 == 0
+    ...      else np.nanmean((T[k:] - T[:-k]) ** p) for k in lg])
+    ...     for p in (2, 3, 5)}
+    >>> all(np.allclose(fast[p], ref[p]) for p in (2, 3, 5))
+    True
     """
     T = np.asarray(T, float)
     lags = np.asarray(list(lags), int)
     out = {p: np.full(lags.size, np.nan, float) for p in orders}
     n = T.size
-    for i, k in enumerate(lags):
-        if k <= 0 or k >= n:
-            continue
-        d = T[k:] - T[:-k]
-        for p in orders:
-            out[p][i] = _moment(d, p)
+
+    # Only lags with 0 < k < n contribute any samples; the rest stay NaN.
+    valid = (lags > 0) & (lags < n)
+    if not valid.any():
+        return out
+    klags = lags[valid]
+
+    # Build every delta array at once as an (nlags x n) matrix instead of
+    # looping over lags in Python. delta[i, j] = T[j + k_i] - T[j] where the
+    # shifted index is in range, otherwise NaN (the ragged tail per lag).
+    # Memory trade-off: this materializes an (nlags x n) float array
+    # (e.g. 160 x 36000 ~ 46 MB); acceptable for typical block sizes and
+    # far faster than the per-lag Python loop.
+    j = np.arange(n)
+    idx = j[None, :] + klags[:, None]           # (nlags, n) shifted indices
+    in_range = idx < n
+    np.clip(idx, 0, n - 1, out=idx)             # avoid out-of-bounds gather
+    delta = T[idx] - T[None, :]                 # (nlags, n)
+    delta[~in_range] = np.nan
+
+    # Apply the moment in one pass per order over all lags simultaneously,
+    # keeping the signed/unsigned convention: even -> |delta|^p, odd -> delta^p.
+    for p in orders:
+        vals = np.abs(delta) ** p if p % 2 == 0 else delta ** p
+        out[p][valid] = np.nanmean(vals, axis=1)
     return out
 
 
