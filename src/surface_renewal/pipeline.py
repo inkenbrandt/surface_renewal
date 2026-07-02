@@ -113,8 +113,8 @@ def _ensure_df(
 
 def _preprocess_df(df: pd.DataFrame, cfg: PipelineConfig) -> pd.DataFrame:
     """Despike & rotate winds; return DataFrame with u_r, v_r, w_r and cleaned T."""
-    # Quick sanity flagging (non-destructive)
-    _ = velocity_temperature_consistency(df)
+    # Quick sanity flagging (non-destructive); True marks suspicious records.
+    qc_range_flag = velocity_temperature_consistency(df)
 
     # Despike
     df_d, _masks = despike_dataframe(
@@ -134,10 +134,10 @@ def _preprocess_df(df: pd.DataFrame, cfg: PipelineConfig) -> pd.DataFrame:
     if cfg.rotation == "planar_fit":
         # Planar-fit (stable across terrain); stores matrix in attrs
         rot: RotationResult = planar_fit(df_d)
-        return rot.df  # contains u_r, v_r, w_r
+        out = rot.df  # contains u_r, v_r, w_r
     elif cfg.rotation == "double":
         # Double rotation over the full dataset; adds u_r, v_r, w_r
-        return double_rotation(df_d, by="none")
+        out = double_rotation(df_d, by="none")
     elif cfg.rotation == "none":
         # No rotation: rotated columns are just the raw components (identity R)
         out = df_d.copy()
@@ -145,9 +145,13 @@ def _preprocess_df(df: pd.DataFrame, cfg: PipelineConfig) -> pd.DataFrame:
         out["v_r"] = out["v"]
         out["w_r"] = out["w"]
         rot = RotationResult(df=out, R=np.eye(3), meta={"rotation": "none"})
-        return rot.df
+        out = rot.df
     else:
         raise ValueError(f"Unknown rotation scheme: {cfg.rotation!r}")
+
+    # Carry the QC screen through as a boolean column aligned to the output.
+    out["qc_range_flag"] = qc_range_flag.reindex(out.index).fillna(False).astype(bool)
+    return out
 
 
 def _block_iter(df: pd.DataFrame, block: str) -> Iterable[pd.DataFrame]:
@@ -235,6 +239,9 @@ def _compute_block_flux(
         friction_velocity(grp, u_col="u_r", v_col="v_r", w_col="w_r", method="global")
     )
 
+    # Fraction of this block's records flagged by the QC range screen.
+    frac_flagged = grp["qc_range_flag"].mean()
+
     return {
         "passed": bool(passed),
         "H_uncal": float(H_uncal),
@@ -246,6 +253,7 @@ def _compute_block_flux(
         "stdT": float(np.nanstd(grp["T"].to_numpy(float))),
         "rho": float(rho),
         "cp": float(cp),
+        "frac_qc_flagged": float(frac_flagged),
     }
 
 
@@ -298,7 +306,7 @@ def run_surface_renewal(
 
     if not rows:
         return pd.DataFrame(
-            columns=["H_uncal", "LE_resid", "passed", "ustar", "tau_star", "dt_opt", "S3_tau", "stdT", "rho", "cp"]
+            columns=["H_uncal", "LE_resid", "passed", "ustar", "tau_star", "dt_opt", "S3_tau", "stdT", "rho", "cp", "frac_qc_flagged"]
         )
 
     # 3) Assemble tidy frame
