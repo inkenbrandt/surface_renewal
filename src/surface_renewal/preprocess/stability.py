@@ -14,6 +14,72 @@ RotationMode = Literal["none", "double", "planar_fit"]
 from ..methods.chen97 import estimate_friction_velocity, rotate_wind  # type: ignore
 from ..structure import structure_functions, pick_optimal_lag  # type: ignore
 
+# Physical constants
+VON_KARMAN = 0.41  # von Kármán constant κ (dimensionless)
+GRAVITY = 9.81     # gravitational acceleration g (m s⁻²)
+
+
+def monin_obukhov_length(
+    ustar: float,
+    T_K: float,
+    H: float,
+    rho: float = 1.2,
+    cp: float = 1005.0,
+) -> float:
+    """Compute the Monin–Obukhov length L.
+
+    L = - (ρ c_p T_K u*³) / (κ g H)
+
+    Parameters
+    ----------
+    ustar : float
+        Friction velocity u* (m s⁻¹).
+    T_K : float
+        Mean air temperature (K).
+    H : float
+        Sensible heat flux (W m⁻²).
+    rho : float, default 1.2
+        Air density (kg m⁻³).
+    cp : float, default 1005.0
+        Specific heat of air at constant pressure (J kg⁻¹ K⁻¹).
+
+    Returns
+    -------
+    float
+        Monin–Obukhov length L (m). Returns NaN if ``H == 0`` or ``ustar <= 0``.
+    """
+    if H == 0 or ustar <= 0:
+        return float(np.nan)
+    return float(-(rho * cp * T_K * ustar ** 3) / (VON_KARMAN * GRAVITY * H))
+
+
+def zeta(
+    z: float,
+    ustar: float,
+    T_K: float,
+    H: float,
+    rho: float = 1.2,
+    cp: float = 1005.0,
+) -> float:
+    """Compute the atmospheric stability parameter ζ = z / L.
+
+    Parameters
+    ----------
+    z : float
+        Measurement height (m).
+    ustar, T_K, H, rho, cp
+        Passed through to :func:`monin_obukhov_length`.
+
+    Returns
+    -------
+    float
+        Stability parameter ζ = z / L (dimensionless). Returns NaN when L is NaN.
+    """
+    L = monin_obukhov_length(ustar, T_K, H, rho=rho, cp=cp)
+    if not np.isfinite(L) or L == 0:
+        return float(np.nan)
+    return float(z / L)
+
 
 @dataclass
 class BlockDiagnostics:
@@ -29,6 +95,10 @@ class BlockDiagnostics:
         Optimal lag τ* (s), typically maximizing |S3(τ)|/τ or an equivalent criterion.
     stdT : float
         Standard deviation of temperature within the block (K).
+    L : float, optional
+        Monin–Obukhov length (m); NaN if not computed.
+    zeta : float, optional
+        Stability parameter ζ = z / L (dimensionless); NaN if not computed.
     passed : bool, optional
         Whether this block passes the stability screen (filled by `stability_ok`).
     meta : dict, optional
@@ -48,6 +118,8 @@ class BlockDiagnostics:
     S3_tau: float
     tau_opt: float
     stdT: float
+    L: float = np.nan
+    zeta: float = np.nan
     passed: Optional[bool] = None
     meta: Dict[str, Any] = field(default_factory=dict)
 
@@ -61,6 +133,8 @@ def compute_block_diagnostics(
     hz: float,
     rotation: RotationMode = "planar_fit",
     lag_window_s: tuple[float, float] = (0.2, 8.0),
+    H: float = np.nan,
+    z: float = np.nan,
 ) -> BlockDiagnostics:
     """Compute block-level diagnostics for SR stability screening.
 
@@ -78,6 +152,12 @@ def compute_block_diagnostics(
         - "none": no rotation (discouraged unless inputs are pre-rotated)
     lag_window_s : (float, float), default (0.2, 8.0)
         Inclusive range of lag times (seconds) to scan for τ*.
+    H : float, default NaN
+        Uncalibrated sensible heat flux (W m⁻²). When finite, it is used to
+        compute the Monin–Obukhov length ``L``.
+    z : float, default NaN
+        Measurement height (m). When finite (together with ``H``), it is used to
+        compute the stability parameter ``ζ = z / L``.
 
     Returns
     -------
@@ -120,11 +200,24 @@ def compute_block_diagnostics(
     # 2) Friction velocity (rotation handled inside estimate_friction_velocity)
     u_star = estimate_friction_velocity(u, v, w, rotation=rotation)
 
+    # 3) Stability (Monin–Obukhov length and ζ) when H is available
+    L_val = np.nan
+    zeta_val = np.nan
+    if np.isfinite(H):
+        # Mean air temperature in Kelvin (accept Celsius or Kelvin inputs).
+        T_mean = float(np.nanmean(T))
+        T_K = T_mean + 273.15 if T_mean < 150.0 else T_mean
+        L_val = monin_obukhov_length(u_star, T_K, H)
+        if np.isfinite(z):
+            zeta_val = zeta(z, u_star, T_K, H)
+
     return BlockDiagnostics(
         u_star=u_star,
         S3_tau=S3_tau,
         tau_opt=tau_opt,
         stdT=stdT,
+        L=L_val,
+        zeta=zeta_val,
         meta={"k_opt": int(k_opt), "lags_examined": (int(kmin), int(kmax), int(len(lags)))},
     )
 
