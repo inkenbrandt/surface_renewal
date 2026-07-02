@@ -257,8 +257,9 @@ class Calibration:
 def rho_air_ideal(
     T_K: pd.Series | np.ndarray,
     P_Pa: pd.Series | np.ndarray = 101325.0,
+    q_kgkg: pd.Series | np.ndarray | None = None,
 ) -> pd.Series:
-    """Dry-air density via ideal gas law: ρ = P / (R_d T).
+    """Air density via ideal gas law: ρ = P / (R_d T_v).
 
     Parameters
     ----------
@@ -266,6 +267,10 @@ def rho_air_ideal(
         Air temperature in Kelvin.
     P_Pa : array-like or float, default 101325
         Air pressure in Pa.
+    q_kgkg : array-like, optional
+        Specific humidity (kg kg⁻¹). If provided, density is computed for moist
+        air using the virtual temperature T_v = T_K * (1 + 0.608 * q). If None,
+        falls back to dry-air density (R_d = 287.05 J kg⁻¹ K⁻¹).
 
     Returns
     -------
@@ -274,13 +279,19 @@ def rho_air_ideal(
 
     Notes
     -----
-    Uses R_d = 287.05 J kg⁻¹ K⁻¹ (dry air). For humid air, reduce density
-    using virtual temperature (not included here to keep dependencies minimal).
+    Uses R_d = 287.05 J kg⁻¹ K⁻¹ (dry air). For humid air, density is reduced
+    via the virtual temperature: at T=300 K and q=0.015 kg/kg, ρ is ~0.9% lower
+    than the dry-air value.
     """
     R_d = 287.05
     T = pd.Series(T_K, dtype=float)
     P = pd.Series(P_Pa, dtype=float).reindex_like(T).fillna(101325.0)
-    return P / (R_d * T)
+    if q_kgkg is None:
+        T_v = T
+    else:
+        q = pd.Series(q_kgkg, dtype=float).reindex_like(T).fillna(0.0)
+        T_v = T * (1.0 + 0.608 * q)
+    return P / (R_d * T_v)
 
 
 def cp_air_const(T_K: pd.Series | np.ndarray | float = 300.0) -> pd.Series:
