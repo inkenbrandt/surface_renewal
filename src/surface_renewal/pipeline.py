@@ -234,9 +234,11 @@ def _compute_block_flux(
         if np.isfinite(H_uncal):
             LE = Rn_blk - G_blk - H_uncal
 
-    # Friction velocity (from rotated covariances added by _preprocess_df)
+    # Friction velocity (from rotated covariances added by _preprocess_df).
+    # `friction_velocity(..., method="global")` returns a length-1 Series; take
+    # the scalar via .iloc[0] (pandas 3.x disallows float() on a Series).
     ustar_val = float(
-        friction_velocity(grp, u_col="u_r", v_col="v_r", w_col="w_r", method="global")
+        friction_velocity(grp, u_col="u_r", v_col="v_r", w_col="w_r", method="global").iloc[0]
     )
 
     # Fraction of this block's records flagged by the QC range screen.

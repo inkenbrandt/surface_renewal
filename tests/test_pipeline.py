@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -39,6 +40,42 @@ def test_run_surface_renewal_empty_data():
 
     assert isinstance(result, pd.DataFrame)
     assert result.empty
+
+def _chen97_segment(fs: int = 10) -> pd.DataFrame:
+    """Build a synthetic 30-minute, DatetimeIndex-indexed segment for Chen97."""
+    rng = np.random.default_rng(0)
+    n_rows = fs * 60 * 30  # 30 minutes at `fs` Hz
+    t = np.arange(n_rows) / fs
+
+    # Sinusoidal ramp pattern for T: amplitude 0.3 K, period 60 s, plus noise.
+    T = 298.15 + 0.3 * np.sin(2 * np.pi * t / 60.0) + rng.standard_normal(n_rows) * 0.02
+
+    # White-noise wind components with the requested standard deviations.
+    u = rng.standard_normal(n_rows) * 1.5
+    v = rng.standard_normal(n_rows) * 0.3
+    w = rng.standard_normal(n_rows) * 0.15
+
+    start = pd.Timestamp("2023-01-01 00:00:00")
+    index = start + pd.to_timedelta(t, unit="s")
+    return pd.DataFrame({"T": T, "u": u, "v": v, "w": w}, index=index)
+
+
+def test_chen97_pipeline_runs():
+    """The Chen97 pipeline runs end-to-end on a synthetic ramp segment."""
+    df = _chen97_segment(fs=10)
+
+    config = PipelineConfig(fs=10, method="chen97", rotation="double", block="30min")
+    result = run_surface_renewal(df, cfg=config)
+
+    assert len(result) >= 1
+    assert np.isfinite(result["H_uncal"]).all()
+    assert (result["tau_star"] > 0).all()
+    assert np.isfinite(result["S3_tau"]).all()
+
+    # rotation="none" should also run without raising.
+    config_none = PipelineConfig(fs=10, method="chen97", rotation="none", block="30min")
+    run_surface_renewal(df, cfg=config_none)
+
 
 def test_ensure_df_no_datetimeindex(sample_data):
     """Test that _ensure_df creates a DatetimeIndex."""
