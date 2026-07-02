@@ -14,43 +14,17 @@ RotationMode = Literal["none", "double", "planar_fit"]
 from ..methods.chen97 import estimate_friction_velocity, rotate_wind  # type: ignore
 from ..structure import structure_functions, pick_optimal_lag  # type: ignore
 
-# Physical constants
+# Physical constants (kept here for backwards compatibility with callers that
+# imported them from this module; canonical definitions live in
+# ``surface_renewal.most`` as ``KAPPA`` and ``G``).
 VON_KARMAN = 0.41  # von Kármán constant κ (dimensionless)
 GRAVITY = 9.81     # gravitational acceleration g (m s⁻²)
 
-
-def monin_obukhov_length(
-    ustar: float,
-    T_K: float,
-    H: float,
-    rho: float = 1.2,
-    cp: float = 1005.0,
-) -> float:
-    """Compute the Monin–Obukhov length L.
-
-    L = - (ρ c_p T_K u*³) / (κ g H)
-
-    Parameters
-    ----------
-    ustar : float
-        Friction velocity u* (m s⁻¹).
-    T_K : float
-        Mean air temperature (K).
-    H : float
-        Sensible heat flux (W m⁻²).
-    rho : float, default 1.2
-        Air density (kg m⁻³).
-    cp : float, default 1005.0
-        Specific heat of air at constant pressure (J kg⁻¹ K⁻¹).
-
-    Returns
-    -------
-    float
-        Monin–Obukhov length L (m). Returns NaN if ``H == 0`` or ``ustar <= 0``.
-    """
-    if H == 0 or ustar <= 0:
-        return float(np.nan)
-    return float(-(rho * cp * T_K * ustar ** 3) / (VON_KARMAN * GRAVITY * H))
+# The Monin–Obukhov length implementation now lives in ``surface_renewal.most``
+# to avoid duplicating the formula. Re-export under the historical name so
+# existing imports (``from ...preprocess.stability import monin_obukhov_length``)
+# keep working.
+from ..most import obukhov_length as monin_obukhov_length  # noqa: E402
 
 
 def zeta(
