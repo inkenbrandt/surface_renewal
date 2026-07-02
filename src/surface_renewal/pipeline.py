@@ -12,7 +12,7 @@ from .io import read_highfreq
 from .preprocess.despike import despike_dataframe, velocity_temperature_consistency
 from .preprocess.rotation import planar_fit, double_rotation, friction_velocity, RotationResult
 from .preprocess.stability import compute_block_diagnostics, stability_ok, BlockDiagnostics
-from .preprocess.calibration import rho_air_ideal, cp_air_const  # optional helpers
+from .preprocess.calibration import rho_air_ideal, cp_air_const, Calibration  # optional helpers
 
 # Methods
 from .methods.snyder import estimate_H_snyder, SnyderResult  # Snyder96 cubic-ramp  :contentReference[oaicite:3]{index=3}
@@ -264,6 +264,7 @@ def run_surface_renewal(
     *,
     cfg: PipelineConfig,
     time_col: Optional[str] = None,
+    alpha: Optional[float | Calibration] = None,
 ) -> pd.DataFrame:
     """End-to-end surface-renewal pipeline → block-level fluxes & diagnostics.
 
@@ -277,18 +278,31 @@ def run_surface_renewal(
         Configuration for sampling frequency, despiking, rotation, method, screening, etc.
     time_col : str, optional
         If `data` is a table without a DatetimeIndex, name of the timestamp column.
+    alpha : float or Calibration, optional
+        Optional block-scale calibration applied to ``H_uncal`` to produce a
+        calibrated sensible heat flux ``H_cal``:
+
+        - If a ``float``, ``H_cal = alpha * H_uncal``.
+        - If a :class:`~surface_renewal.preprocess.calibration.Calibration`,
+          ``H_cal = alpha.apply(H_uncal)`` (i.e. ``alpha * H_uncal + beta``).
+        - If ``None`` (default), no ``H_cal`` column is added (backwards compatible).
+
+        When ``H_cal`` is present and both ``Rn`` and ``G`` are available, a
+        calibrated residual latent heat flux ``LE_cal = Rn - G - H_cal`` is also added.
 
     Returns
     -------
     pd.DataFrame
         Block-level results indexed by block end time with columns:
-        ``["H_uncal","LE_resid","passed","ustar","tau_star","dt_opt","S3_tau","stdT","rho","cp"]``
+        ``["H_uncal","LE_resid","passed","ustar","tau_star","dt_opt","S3_tau","stdT","rho","cp"]``.
+        If ``alpha`` is provided, an ``H_cal`` column is added (and ``LE_cal`` when
+        ``Rn`` and ``G`` are available).
 
     Notes
     -----
-    - **Uncalibrated H** is returned by design; fit and apply a block-scale **alpha**
-      using your reference EC H via `Calibration.from_reference(...).apply(...)` in a
-      post-step. :contentReference[oaicite:7]{index=7}
+    - **Uncalibrated H** is returned by design; pass ``alpha`` (or fit and apply a
+      block-scale **alpha** using your reference EC H via
+      `Calibration.from_reference(...).apply(...)`) to obtain calibrated H. :contentReference[oaicite:7]{index=7}
     - Snyder method uses S2/S3/S5 + Cardano cubic recovery; Chen97 uses S3(τ*), u*,
       and τ* scaling; both follow the implementations in `methods/`. :contentReference[oaicite:8]{index=8} :contentReference[oaicite:9]{index=9}
     """
@@ -307,11 +321,26 @@ def run_surface_renewal(
         rows.append((grp.index[-1], res))
 
     if not rows:
-        return pd.DataFrame(
-            columns=["H_uncal", "LE_resid", "passed", "ustar", "tau_star", "dt_opt", "S3_tau", "stdT", "rho", "cp", "frac_qc_flagged"]
-        )
+        cols = ["H_uncal", "LE_resid", "passed", "ustar", "tau_star", "dt_opt", "S3_tau", "stdT", "rho", "cp", "frac_qc_flagged"]
+        if alpha is not None:
+            cols.append("H_cal")
+            cols.append("LE_cal")
+        return pd.DataFrame(columns=cols)
 
     # 3) Assemble tidy frame
     idx = pd.to_datetime([ix for ix, _ in rows])
     out = pd.DataFrame([r for _, r in rows], index=idx).sort_index()
+
+    # 4) Optional calibration → H_cal (and residual LE_cal when Rn, G available)
+    if alpha is not None:
+        if isinstance(alpha, Calibration):
+            out["H_cal"] = alpha.apply(out["H_uncal"]).to_numpy()
+        else:
+            out["H_cal"] = out["H_uncal"] * float(alpha)
+
+        # Recompute the residual LE using calibrated H when radiation terms exist.
+        # LE_resid was built from Rn - G - H_uncal, so Rn - G = LE_resid + H_uncal.
+        if "Rn" in df_prep.columns and "G" in df_prep.columns:
+            out["LE_cal"] = out["LE_resid"] + out["H_uncal"] - out["H_cal"]
+
     return out
