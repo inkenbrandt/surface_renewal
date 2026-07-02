@@ -17,9 +17,10 @@ from .preprocess.calibration import rho_air_ideal, cp_air_const, Calibration  # 
 # Methods
 from .methods.snyder import estimate_H_snyder, SnyderResult  # Snyder96 cubic-ramp  :contentReference[oaicite:3]{index=3}
 from .methods.chen97 import estimate_H_chen, ChenResult       # Chen97 variant       :contentReference[oaicite:4]{index=4}
+from .methods.fvs import estimate_H_fvs, FVSResult            # flux–variance similarity
 
 
-MethodName = Literal["snyder", "chen97"]
+MethodName = Literal["snyder", "chen97", "fvs"]
 
 
 @dataclass
@@ -211,6 +212,7 @@ def _compute_block_flux(
     diag.passed = passed
 
     # Compute uncalibrated H via selected SR method
+    zeta = np.nan  # only the height-dependent FVS method fills this in
     if cfg.method == "snyder":
         sres: SnyderResult = estimate_H_snyder(
             grp["T"].to_numpy(float), hz=hz, rho=rho, cp=cp
@@ -219,6 +221,25 @@ def _compute_block_flux(
         tau_star = sres.tau
         dt_opt = sres.dt_opt
         S3_tau = np.nan  # different construction; supplied by diag below if needed
+    elif cfg.method == "fvs":
+        if cfg.z_m is None:
+            raise ValueError("method='fvs' requires cfg.z_m")
+        # Block-mean temperature in Kelvin (accept Celsius or Kelvin inputs).
+        T_mean = float(np.nanmean(grp["T"].to_numpy(float)))
+        T_K_mean = T_mean + 273.15 if T_mean < 150.0 else T_mean
+        fres: FVSResult = estimate_H_fvs(
+            sigma_T=diag.stdT,
+            ustar=diag.u_star,
+            T_K=T_K_mean,
+            z_m=cfg.z_m,
+            rho=rho, cp=cp,
+            sign_hint=diag.S3_tau,  # sign(S3(τ*)) supplies the flux direction
+        )
+        H_uncal = fres.H
+        tau_star = diag.tau_opt
+        dt_opt = diag.tau_opt
+        S3_tau = diag.S3_tau
+        zeta = fres.zeta
     else:
         cres: ChenResult = estimate_H_chen(
             T=grp["T"].to_numpy(float),
@@ -263,6 +284,7 @@ def _compute_block_flux(
         "U_mean": U,
         "tau_star": float(tau_star),
         "dt_opt": float(dt_opt),
+        "zeta": float(zeta) if np.isfinite(zeta) else np.nan,
         "S3_tau": float(S3_tau) if np.isfinite(S3_tau) else np.nan,
         "stdT": float(np.nanstd(grp["T"].to_numpy(float))),
         "rho": float(rho),
@@ -333,7 +355,7 @@ def run_surface_renewal(
         rows.append((grp.index[-1], res))
 
     if not rows:
-        cols = ["H_uncal", "LE_resid", "passed", "ustar", "U_mean", "tau_star", "dt_opt", "S3_tau", "stdT", "rho", "cp", "frac_qc_flagged"]
+        cols = ["H_uncal", "LE_resid", "passed", "ustar", "U_mean", "tau_star", "dt_opt", "zeta", "S3_tau", "stdT", "rho", "cp", "frac_qc_flagged"]
         if alpha is not None:
             cols.append("H_cal")
             cols.append("LE_cal")

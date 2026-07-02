@@ -9,7 +9,7 @@ import pandas as pd
 from .pipeline import PipelineConfig, run_surface_renewal
 
 
-MethodName = Literal["snyder", "chen97"]
+MethodName = Literal["snyder", "chen97", "fvs"]
 RotationMode = Literal["planar_fit", "double", "none"]
 DespikeMethod = Literal["hampel", "gaussian"]
 
@@ -134,7 +134,7 @@ def _build_argparser():
     p.add_argument("input", help="Path to CSV/Parquet with high-frequency data.")
     p.add_argument("--fs", type=float, required=True, help="Sampling frequency (Hz).")
     p.add_argument("--block", default="30min", help="Block period, e.g. 30min.")
-    p.add_argument("--method", choices=["snyder", "chen97"], default="snyder")
+    p.add_argument("--method", choices=["snyder", "chen97", "fvs"], default="snyder")
     p.add_argument("--rotation", choices=["planar_fit", "double", "none"], default="planar_fit")
 
     p.add_argument("--despike", choices=["hampel", "gaussian"], default="hampel")
