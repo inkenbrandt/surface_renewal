@@ -1,0 +1,371 @@
+'=====================================================================
+' Surface Renewal Sensible Heat Flux
+' Target     : CR3000 / CR6 / CR1000X
+' Instruments: CSAT3 (SDM) or IRGASON (SDM)
+' Method     : Van Atta / Paw U second- and third-order structure
+'              functions at two lag times
+'
+' Key formulas (simplified form, lag l << ramp period tau):
+'   S2(l) = mean[ (Ts(t) - Ts(t-l))^2 ]
+'   S3(l) = mean[ (Ts(t) - Ts(t-l))^3 ]
+'   a     = S3 / S2            [K]   ramp amplitude
+'   tau   = a^2 * l_s / S2    [s]   ramp period
+'   H     = rho * Cp * alpha * (a / tau)
+'         = rho * Cp * alpha * S2^2 / (S3 * l_s)   [W m-2]
+'
+' Sign convention: H > 0 = upward (daytime unstable)
+'
+' References:
+'   Paw U et al. (1995) Agric. For. Meteorol. 74:119-137
+'   Castellvi (2004) Water Resour. Res. 40:W05201
+'   Van Atta (1977) Boundary-Layer Meteorol. 11:193-202
+'
+' Wiring (CSAT3 or IRGASON):
+'   SDM-C1 -> C1 (clock)
+'   SDM-C2 -> C2 (data)
+'   SDM-C3 -> C3 (enable)
+'   12 V   -> 12V terminal
+'   G      -> G terminal
+'
+' IMPORTANT: Set SDM_ADDR to match DIP-switch address on sensor.
+'            Set SCAN_HZ to match CSAT3 output rate (10 or 20 Hz).
+'            Set P_FIXED_KPA to site pressure, or wire a PTB110.
+'=====================================================================
+
+'======================================================================
+' USER-CONFIGURABLE CONSTANTS
+'======================================================================
+Const SCAN_HZ       = 20       ' CSAT3/IRGASON output rate (Hz): 10 or 20
+Const OUT_MIN       = 30       ' Averaging/output interval (minutes)
+Const SDM_ADDR      = 3        ' SDM address (match sensor DIP switches)
+Const ALPHA         = 0.5      ' Empirical SR calibration coeff (0.3 - 0.8)
+Const LAG_1_SAMP    = 4        ' Lag-1 in samples (4/20 Hz = 0.20 s)
+Const LAG_2_SAMP    = 8        ' Lag-2 in samples (8/20 Hz = 0.40 s)
+Const P_FIXED_KPA   = 101.325  ' Fallback site pressure (kPa); used when
+                               '   no pressure sensor is wired (see SlowSeq)
+Const USE_IRGASON   = False    ' True = IRGASON instruction; False = CSAT3
+
+'======================================================================
+' PHYSICAL AND DERIVED CONSTANTS  (do not edit)
+'======================================================================
+Const CP_AIR  = 1004.0         ' Specific heat of air (J kg-1 K-1)
+Const R_DRY   = 287.058        ' Gas constant dry air (J kg-1 K-1)
+Const KELVIN  = 273.15         ' 0 degC in K
+Const SCAN_MS = INT(1000 / SCAN_HZ)      ' Scan interval (ms)
+Const BUF_SZ  = LAG_2_SAMP + 1          ' Ring-buffer depth
+
+'======================================================================
+' PUBLIC VARIABLES  (visible in datalogger Live Screen)
+'======================================================================
+Public PanelTemp
+Public BattVolt
+
+' --- CSAT3 / IRGASON outputs -----------------------------------------
+' For CSAT3:    Ux, Uy, Uz, Ts(degC), Diag
+' For IRGASON:  CO2, H2O, Ux, Uy, Uz, Ts(degC), Diag  (extra channels)
+' We always alias channels starting at CSAT array position 1.
+Public CSAT(5)
+Alias CSAT(1) = Ux             ' m s-1 (along-wind)
+Alias CSAT(2) = Uy             ' m s-1 (cross-wind)
+Alias CSAT(3) = Uz             ' m s-1 (vertical)
+Alias CSAT(4) = Ts             ' Sonic virtual temperature (degC)
+Alias CSAT(5) = CSAT_Diag      ' Diagnostic word (0 = OK)
+
+Public Ts_K       As Float     ' Ts in Kelvin
+Public P_kPa      As Float     ' Atmospheric pressure (kPa)
+Public rho        As Float     ' Air density (kg m-3)
+
+' --- Structure functions (averaged over output interval) -------------
+Public S2_L1      As Float     ' 2nd-order SF at lag 1 (K^2)
+Public S3_L1      As Float     ' 3rd-order SF at lag 1 (K^3)
+Public S2_L2      As Float     ' 2nd-order SF at lag 2 (K^2)
+Public S3_L2      As Float     ' 3rd-order SF at lag 2 (K^3)
+
+' --- Per-lag ramp estimates ------------------------------------------
+Public a_L1       As Float     ' Ramp amplitude from lag-1 (K)
+Public tau_L1     As Float     ' Ramp period    from lag-1 (s)
+Public a_L2       As Float     ' Ramp amplitude from lag-2 (K)
+Public tau_L2     As Float     ' Ramp period    from lag-2 (s)
+
+' --- Final surface renewal outputs -----------------------------------
+Public a_SR       As Float     ' Mean ramp amplitude (K)
+Public tau_SR     As Float     ' Mean ramp period (s)
+Public H_SR       As Float     ' Sensible heat flux (W m-2)
+
+'======================================================================
+' PRIVATE VARIABLES
+'======================================================================
+' Ring buffer
+Dim Tbuf(BUF_SZ)  As Float     ' Circular buffer of Ts_K values
+Dim buf_ptr       As Integer   ' Current write position (1-based)
+Dim scan_N        As Long      ' Total scans since last reset
+
+' Structure function accumulators (double for numerical precision)
+Dim sf_S2_1       As Double
+Dim sf_S3_1       As Double
+Dim sf_S2_2       As Double
+Dim sf_S3_2       As Double
+Dim sf_T          As Double    ' Accumulator for mean Ts_K
+Dim sf_N          As Long      ' Samples contributing to SF sums
+
+' Working variables declared module-level to avoid repeated stack alloc
+Dim idx1          As Integer
+Dim idx2          As Integer
+Dim dT1           As Float
+Dim dT2           As Float
+
+'======================================================================
+' OUTPUT TABLES
+'======================================================================
+DataTable(SR_Stats, True, -1)
+  DataInterval(0, OUT_MIN, Min, 10)
+  TableFile("CRD:SR_Stats", 64, -1, 0, 1, Day, 0, 0)
+
+  '--- Meteorology ---------------------------------------------------
+  Average   (1, Ts,       FP2, CSAT_Diag <> 0 Or IsBad(Ts))
+  Average   (1, Ux,       FP2, CSAT_Diag <> 0 Or IsBad(Ux))
+  Average   (1, Uy,       FP2, CSAT_Diag <> 0 Or IsBad(Uy))
+  Average   (1, Uz,       FP2, CSAT_Diag <> 0 Or IsBad(Uz))
+  StdDev    (1, Uz,       FP2, CSAT_Diag <> 0 Or IsBad(Uz))
+  FieldNames("Uz_Std")
+  WindVector(1, Ux, Uy,   FP2, CSAT_Diag <> 0, 0, 1, 0)
+  FieldNames("WS_mean,WD_mean")
+
+  '--- Surface renewal flux and ramp parameters ----------------------
+  Sample(1, H_SR,    FP2)       ' W m-2  (+ = upward from surface)
+  Sample(1, a_SR,    FP2)       ' K      ramp amplitude
+  Sample(1, tau_SR,  FP2)       ' s      ramp period
+
+  '--- Per-lag diagnostic -------------------------------------------
+  Sample(1, a_L1,    FP2)
+  Sample(1, tau_L1,  FP2)
+  Sample(1, a_L2,    FP2)
+  Sample(1, tau_L2,  FP2)
+
+  '--- Structure functions (raw diagnostic) -------------------------
+  Sample(1, S2_L1,   FP2)
+  Sample(1, S3_L1,   FP2)
+  Sample(1, S2_L2,   FP2)
+  Sample(1, S3_L2,   FP2)
+
+  '--- Environmental / QA -------------------------------------------
+  Sample(1, P_kPa,   FP2)
+  Sample(1, rho,     FP2)
+  Average(1, BattVolt, FP2, False)
+  Sample(1, PanelTemp, FP2)
+EndTable
+
+'--- Optional high-frequency record (20 Hz raw data) -----------------
+' Disable by commenting out CallTable(SR_HF) in BeginProg below.
+DataTable(SR_HF, True, -1)
+  DataInterval(0, SCAN_MS, mSec, 100)
+  TableFile("CRD:SR_HF", 64, -1, 0, 1, Hour, 0, 0)
+  Sample(1, Ts,  FP2)
+  Sample(1, Ux,  FP2)
+  Sample(1, Uy,  FP2)
+  Sample(1, Uz,  FP2)
+EndTable
+
+'======================================================================
+' SUBROUTINE: Compute surface renewal H at end of each output interval
+'======================================================================
+Sub ComputeSR()
+  Dim lag1_s  As Float
+  Dim lag2_s  As Float
+  Dim ok1     As Boolean
+  Dim ok2     As Boolean
+  Dim k       As Integer
+
+  lag1_s = LAG_1_SAMP / SCAN_HZ   ' 0.20 s
+  lag2_s = LAG_2_SAMP / SCAN_HZ   ' 0.40 s
+
+  '--- Guard: need at least some accumulated samples -----------------
+  If sf_N < 10 Then
+    S2_L1 = NAN : S3_L1 = NAN
+    S2_L2 = NAN : S3_L2 = NAN
+    a_L1  = NAN : tau_L1 = NAN
+    a_L2  = NAN : tau_L2 = NAN
+    a_SR  = NAN : tau_SR = NAN
+    H_SR  = NAN
+    GoTo ResetSR
+  End If
+
+  '--- Average structure functions over period ----------------------
+  S2_L1 = sf_S2_1 / sf_N
+  S3_L1 = sf_S3_1 / sf_N
+  S2_L2 = sf_S2_2 / sf_N
+  S3_L2 = sf_S3_2 / sf_N
+
+  '--- Mean air density (ideal gas: rho = P / (Rd * T)) -------------
+  rho = (P_kPa * 1000.0) / (R_DRY * (sf_T / sf_N))
+
+  '--- Lag-1 ramp estimates (requires S2 != 0 and S3 != 0) ----------
+  ok1 = (S2_L1 <> 0.0 And S3_L1 <> 0.0 And _
+         Not IsBad(S2_L1) And Not IsBad(S3_L1))
+  If ok1 Then
+    a_L1   = S3_L1 / S2_L1
+    tau_L1 = (a_L1 ^ 2) * lag1_s / S2_L1
+  Else
+    a_L1 = NAN : tau_L1 = NAN
+  End If
+
+  '--- Lag-2 ramp estimates ----------------------------------------
+  ok2 = (S2_L2 <> 0.0 And S3_L2 <> 0.0 And _
+         Not IsBad(S2_L2) And Not IsBad(S3_L2))
+  If ok2 Then
+    a_L2   = S3_L2 / S2_L2
+    tau_L2 = (a_L2 ^ 2) * lag2_s / S2_L2
+  Else
+    a_L2 = NAN : tau_L2 = NAN
+  End If
+
+  '--- Combine lag estimates ----------------------------------------
+  If ok1 And ok2 Then
+    a_SR   = (a_L1   + a_L2)   / 2.0
+    tau_SR = (tau_L1 + tau_L2) / 2.0
+  ElseIf ok1 Then
+    a_SR = a_L1   : tau_SR = tau_L1
+  ElseIf ok2 Then
+    a_SR = a_L2   : tau_SR = tau_L2
+  Else
+    a_SR = NAN : tau_SR = NAN : H_SR = NAN
+    GoTo ResetSR
+  End If
+
+  '--- Final sensible heat flux -------------------------------------
+  ' H = rho * Cp * alpha * (a / tau)
+  ' Equivalent compact form: H = rho * Cp * alpha * S2^2 / (S3 * l_s)
+  ' Using the averaged ramp parameters here (a_SR / tau_SR):
+  If tau_SR <> 0.0 And Not IsBad(tau_SR) Then
+    H_SR = rho * CP_AIR * ALPHA * (a_SR / tau_SR)
+  Else
+    H_SR = NAN
+  End If
+
+ResetSR:
+  '--- Reset accumulators and ring buffer for next period -----------
+  sf_S2_1 = 0.0 : sf_S3_1 = 0.0
+  sf_S2_2 = 0.0 : sf_S3_2 = 0.0
+  sf_T    = 0.0 : sf_N    = 0
+  scan_N  = 0
+  buf_ptr = 1
+  For k = 1 To BUF_SZ
+    Tbuf(k) = NAN
+  Next k
+End Sub
+
+'======================================================================
+' MAIN PROGRAM
+'======================================================================
+BeginProg
+  '--- Initialise ---------------------------------------------------
+  P_kPa   = P_FIXED_KPA      ' Use fixed value until SlowSeq updates it
+  buf_ptr = 1
+  scan_N  = 0
+  sf_S2_1 = 0.0 : sf_S3_1 = 0.0
+  sf_S2_2 = 0.0 : sf_S3_2 = 0.0
+  sf_T    = 0.0 : sf_N    = 0
+
+  Dim k As Integer
+  For k = 1 To BUF_SZ
+    Tbuf(k) = NAN
+  Next k
+
+  '==================================================================
+  ' SLOW SEQUENCE  --  low-frequency sensors (every 5 s)
+  '==================================================================
+  SlowSequence
+    Scan(5, Sec, 3, 0)
+      PanelTemp(PanelTemp, 250)
+      Battery(BattVolt)
+
+      '--- Pressure sensor (PTB110 on SE1, 0-5 V = 60-110 kPa) ----
+      ' Uncomment and adjust scaling if a pressure sensor is wired:
+      ' Dim P_V As Float
+      ' VoltSe(P_V, 1, mV5000, 1, True, 0, _60Hz, 1.0, 0)
+      ' P_kPa = P_V * (110.0 - 60.0) / 5000.0 + 60.0
+
+      '--- Or hard-code site elevation pressure (barometric formula):
+      ' P_kPa = 101.325 * EXP(-0.0289644 * 9.80665 * elev_m / (8.31447 * 288.15))
+    NextScan
+  End SlowSequence
+
+  '==================================================================
+  ' FAST SCAN  --  20 Hz sonic anemometer data
+  '==================================================================
+  Scan(SCAN_MS, mSec, 3, 0)
+
+    '--- Sonic anemometer measurement --------------------------------
+    If NOT USE_IRGASON Then
+      ' CSAT3 via SDM-C50 cable (C1/C2/C3):
+      CSAT3(CSAT(1), 1, SDM_ADDR, 0)
+      ' Returns: Ux(m/s), Uy(m/s), Uz(m/s), Ts(degC), Diag
+    Else
+      ' IRGASON via SDM.  The IRGASON instruction returns 10 values:
+      '   CO2(mg/m3), H2O(g/m3), Ux, Uy, Uz, Ts, Pr(kPa),
+      '   CO2_Diag, H2O_Diag, Sonic_Diag
+      ' Declare a larger destination array and alias as needed:
+      '
+      ' Dim IRGA(10)
+      ' IRGASON(IRGA(1), 1, SDM_ADDR, 0)
+      ' Alias IRGA(3)=Ux, IRGA(4)=Uy, IRGA(5)=Uz, IRGA(6)=Ts
+      ' Alias IRGA(10)=CSAT_Diag
+      ' P_kPa = IRGA(7)    ' use onboard pressure if desired
+      '
+      ' *** Remove the CSAT3() call above and use the block above ***
+      CSAT3(CSAT(1), 1, SDM_ADDR, 0)  ' placeholder -- replace with IRGASON
+    End If
+
+    '--- Convert Ts to Kelvin ----------------------------------------
+    Ts_K = Ts + KELVIN
+
+    '--- Ring-buffer accumulation ------------------------------------
+    ' Only use samples with good CSAT diagnostic and valid Ts
+    If CSAT_Diag = 0 And Not IsBad(Ts) Then
+
+      ' Write current Ts to ring buffer (circular)
+      Tbuf(buf_ptr) = Ts_K
+
+      ' Compute lag indices with circular wrap-around
+      idx1 = buf_ptr - LAG_1_SAMP
+      If idx1 < 1 Then idx1 = idx1 + BUF_SZ
+
+      idx2 = buf_ptr - LAG_2_SAMP
+      If idx2 < 1 Then idx2 = idx2 + BUF_SZ
+
+      ' Accumulate structure functions once ring buffer is primed
+      scan_N = scan_N + 1
+      If scan_N > BUF_SZ Then
+        If Not IsBad(Tbuf(idx1)) And Not IsBad(Tbuf(idx2)) Then
+          dT1 = Ts_K - Tbuf(idx1)
+          dT2 = Ts_K - Tbuf(idx2)
+
+          sf_S2_1 = sf_S2_1 + dT1 * dT1
+          sf_S3_1 = sf_S3_1 + dT1 * dT1 * dT1
+          sf_S2_2 = sf_S2_2 + dT2 * dT2
+          sf_S3_2 = sf_S3_2 + dT2 * dT2 * dT2
+          sf_T    = sf_T + Ts_K
+          sf_N    = sf_N + 1
+        End If
+      End If
+
+      ' Advance ring buffer pointer
+      buf_ptr = buf_ptr + 1
+      If buf_ptr > BUF_SZ Then buf_ptr = 1
+
+    End If  ' end quality check
+
+    '--- End-of-interval: compute SR and log -----------------------
+    ' TimeIntoInterval fires on the FIRST scan of each new interval.
+    ' ComputeSR() uses results from the JUST-COMPLETED interval
+    ' because accumulators are reset inside ComputeSR().
+    If TimeIntoInterval(0, OUT_MIN, Min) Then
+      ComputeSR()
+      CallTable(SR_Stats)
+    End If
+
+    ' Uncomment to log high-frequency data to card:
+    ' CallTable(SR_HF)
+
+  NextScan
+EndProg
