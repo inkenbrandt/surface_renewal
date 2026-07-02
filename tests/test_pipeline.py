@@ -20,6 +20,8 @@ def test_run_surface_renewal_snyder(sample_data):
     assert "H_uncal" in result.columns
     assert "passed" in result.columns
     assert result["passed"].dtype == "bool"
+    assert "U_mean" in result.columns
+    assert (result["U_mean"] > 0).all()
 
 def test_run_surface_renewal_chen97(sample_data):
     """Test the pipeline with the Chen97 method."""

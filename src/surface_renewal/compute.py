@@ -49,6 +49,10 @@ class ComputeConfig:
     stability_stdT : float, default 0.02
     daytime_only : bool, default False
         If True and Rn is available, require Rn>0 to accept block.
+    z_m : float, optional
+        Measurement height above the zero-plane displacement (``z_sensor - d``,
+        with ``d ≈ 0.66 * canopy_height``), in metres. Required by
+        height-dependent methods (``fvs``, ``castellvi``).
     """
     fs: float
     block: str = "30min"
@@ -68,6 +72,7 @@ class ComputeConfig:
     stability_relS3: float = 1e-3
     stability_stdT: float = 0.02
     daytime_only: bool = False
+    z_m: Optional[float] = None
 
     def to_pipeline_config(self) -> PipelineConfig:
         """Translate to the canonical :class:`PipelineConfig`."""
@@ -88,6 +93,7 @@ class ComputeConfig:
             stability_relS3=self.stability_relS3,
             stability_stdT=self.stability_stdT,
             daytime_only=self.daytime_only,
+            z_m=self.z_m,
         )
 
 
@@ -145,6 +151,9 @@ def _build_argparser():
     p.add_argument("--min-stdT", type=float, default=0.02)
     p.add_argument("--daytime-only", action="store_true")
 
+    p.add_argument("--z-m", type=float, default=None,
+                   help="Measurement height above zero-plane displacement (m); z_sensor - d, d≈0.66*canopy height.")
+
     p.add_argument("--time-col", default=None, help="Name of timestamp column if needed.")
     p.add_argument("--out", default=None, help="Optional output Parquet/CSV path.")
     return p
@@ -168,6 +177,7 @@ def _to_cfg(ns) -> ComputeConfig:
         stability_relS3=ns.min_relS3,
         stability_stdT=ns.min_stdT,
         daytime_only=ns.daytime_only,
+        z_m=ns.z_m,
     )
 
 

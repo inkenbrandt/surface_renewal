@@ -60,6 +60,12 @@ class PipelineConfig:
         Minimum std(T) (K) to accept a block.
     daytime_only : bool, default False
         If True, require Rn>0 (only matters if Rn provided).
+    z_m : float, optional
+        Measurement height of the sonic/thermocouple above the zero-plane
+        displacement, in metres. This should be ``z_sensor - d``, where the
+        zero-plane displacement ``d ≈ 0.66 * canopy_height``. Methods that
+        require it (``fvs``, ``castellvi``) will raise a ``ValueError`` at
+        config time if it is left as ``None``.
     """
     fs: float
     block: str = "30min"
@@ -79,6 +85,8 @@ class PipelineConfig:
     stability_relS3: float = 1e-3
     stability_stdT: float = 0.02
     daytime_only: bool = False
+    z_m: Optional[float] = None   # sonic/thermocouple height above
+                                  # zero-plane displacement (m)
 
 
 def _ensure_df(
@@ -244,11 +252,15 @@ def _compute_block_flux(
     # Fraction of this block's records flagged by the QC range screen.
     frac_flagged = grp["qc_range_flag"].mean()
 
+    # Block-mean horizontal wind speed (needed by height-dependent methods).
+    U = float(np.nanmean(np.hypot(grp["u"], grp["v"])))
+
     return {
         "passed": bool(passed),
         "H_uncal": float(H_uncal),
         "LE_resid": float(LE),
         "ustar": ustar_val,
+        "U_mean": U,
         "tau_star": float(tau_star),
         "dt_opt": float(dt_opt),
         "S3_tau": float(S3_tau) if np.isfinite(S3_tau) else np.nan,
@@ -321,7 +333,7 @@ def run_surface_renewal(
         rows.append((grp.index[-1], res))
 
     if not rows:
-        cols = ["H_uncal", "LE_resid", "passed", "ustar", "tau_star", "dt_opt", "S3_tau", "stdT", "rho", "cp", "frac_qc_flagged"]
+        cols = ["H_uncal", "LE_resid", "passed", "ustar", "U_mean", "tau_star", "dt_opt", "S3_tau", "stdT", "rho", "cp", "frac_qc_flagged"]
         if alpha is not None:
             cols.append("H_cal")
             cols.append("LE_cal")
