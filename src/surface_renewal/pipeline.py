@@ -10,7 +10,7 @@ import pandas as pd
 # Local imports
 from .io import read_highfreq
 from .preprocess.despike import despike_dataframe, velocity_temperature_consistency
-from .preprocess.rotation import planar_fit, friction_velocity, RotationResult
+from .preprocess.rotation import planar_fit, double_rotation, friction_velocity, RotationResult
 from .preprocess.stability import compute_block_diagnostics, stability_ok, BlockDiagnostics
 from .preprocess.calibration import rho_air_ideal, cp_air_const  # optional helpers
 
@@ -129,9 +129,25 @@ def _preprocess_df(df: pd.DataFrame, cfg: PipelineConfig) -> pd.DataFrame:
         max_gap=cfg.interp_max_gap,
     )
 
-    # Planar-fit by default (stable across terrain); store matrix in attrs
-    rot: RotationResult = planar_fit(df_d)
-    return rot.df  # contains u_r, v_r, w_r
+    # Rotate winds according to the configured scheme; all branches produce
+    # u_r, v_r, w_r columns downstream code relies on.
+    if cfg.rotation == "planar_fit":
+        # Planar-fit (stable across terrain); stores matrix in attrs
+        rot: RotationResult = planar_fit(df_d)
+        return rot.df  # contains u_r, v_r, w_r
+    elif cfg.rotation == "double":
+        # Double rotation over the full dataset; adds u_r, v_r, w_r
+        return double_rotation(df_d, by="none")
+    elif cfg.rotation == "none":
+        # No rotation: rotated columns are just the raw components (identity R)
+        out = df_d.copy()
+        out["u_r"] = out["u"]
+        out["v_r"] = out["v"]
+        out["w_r"] = out["w"]
+        rot = RotationResult(df=out, R=np.eye(3), meta={"rotation": "none"})
+        return rot.df
+    else:
+        raise ValueError(f"Unknown rotation scheme: {cfg.rotation!r}")
 
 
 def _block_iter(df: pd.DataFrame, block: str) -> Iterable[pd.DataFrame]:
@@ -214,9 +230,9 @@ def _compute_block_flux(
         if np.isfinite(H_uncal):
             LE = Rn_blk - G_blk - H_uncal
 
-    # Friction velocity (from rotated covariances)
+    # Friction velocity (from rotated covariances added by _preprocess_df)
     ustar_val = float(
-        friction_velocity(grp.rename(columns={"u": "u_r", "v": "v_r", "w": "w_r"}), method="global")
+        friction_velocity(grp, u_col="u_r", v_col="v_r", w_col="w_r", method="global")
     )
 
     return {
