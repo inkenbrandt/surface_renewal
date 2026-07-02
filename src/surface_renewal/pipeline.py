@@ -13,6 +13,7 @@ from .preprocess.despike import despike_dataframe, velocity_temperature_consiste
 from .preprocess.rotation import planar_fit, double_rotation, friction_velocity, RotationResult
 from .preprocess.stability import compute_block_diagnostics, stability_ok, BlockDiagnostics
 from .preprocess.calibration import rho_air_ideal, cp_air_const, Calibration  # optional helpers
+from .structure import estimate_CT2
 
 # Methods
 from .methods.snyder import estimate_H_snyder, SnyderResult  # Snyder96 cubic-ramp  :contentReference[oaicite:3]{index=3}
@@ -276,6 +277,11 @@ def _compute_block_flux(
     # Block-mean horizontal wind speed (needed by height-dependent methods).
     U = float(np.nanmean(np.hypot(grp["u"], grp["v"])))
 
+    # Temperature structure parameter C_T^2 (Wyngaard et al. 1971) via the
+    # inertial-subrange second-order structure function. Near-calm blocks
+    # (U <= 0.1 m/s) yield NaN rather than being skipped.
+    CT2, CT2_r2 = estimate_CT2(grp["T"].to_numpy(float), hz=hz, U=U)
+
     return {
         "passed": bool(passed),
         "H_uncal": float(H_uncal),
@@ -290,6 +296,8 @@ def _compute_block_flux(
         "rho": float(rho),
         "cp": float(cp),
         "frac_qc_flagged": float(frac_flagged),
+        "CT2": float(CT2),
+        "CT2_r2": float(CT2_r2),
     }
 
 
@@ -355,7 +363,7 @@ def run_surface_renewal(
         rows.append((grp.index[-1], res))
 
     if not rows:
-        cols = ["H_uncal", "LE_resid", "passed", "ustar", "U_mean", "tau_star", "dt_opt", "zeta", "S3_tau", "stdT", "rho", "cp", "frac_qc_flagged"]
+        cols = ["H_uncal", "LE_resid", "passed", "ustar", "U_mean", "tau_star", "dt_opt", "zeta", "S3_tau", "stdT", "rho", "cp", "frac_qc_flagged", "CT2", "CT2_r2"]
         if alpha is not None:
             cols.append("H_cal")
             cols.append("LE_cal")
