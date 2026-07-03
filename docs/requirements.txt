@@ -1,4 +1,6 @@
 # Documentation build requirements (see .readthedocs.yaml).
 sphinx>=7.0
 sphinx-rtd-theme>=2.0
-myst-parser>=3.0
+# myst-nb bundles myst-parser and renders the docs/tutorials/*.ipynb notebooks
+# (pre-executed; nb_execution_mode = "off" in conf.py).
+myst-nb>=1.2

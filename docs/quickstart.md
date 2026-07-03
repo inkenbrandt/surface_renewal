@@ -1,5 +1,9 @@
 # Quick start
 
+Prefer a runnable, end-to-end walkthrough? The
+{doc}`tutorial notebooks <tutorials/01_quickstart>` cover the same ground
+(and more) as executable Jupyter notebooks with embedded plots.
+
 ## Input data
 
 The pipeline consumes high-frequency (10–20 Hz) scalar and wind data as a

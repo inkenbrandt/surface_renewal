@@ -45,6 +45,14 @@ Highlights
    cli
 
 .. toctree::
+   :maxdepth: 1
+   :caption: Tutorials
+
+   tutorials/01_quickstart
+   tutorials/02_method_comparison
+   tutorials/03_calibration
+
+.. toctree::
    :maxdepth: 2
    :caption: Background
 

@@ -16,7 +16,12 @@ full reference list) is documented in [docs/theory.md](docs/theory.md).
 Full documentation (installation, quick start, method-selection guide, CLI
 reference, theory, and API reference) lives in [docs/](docs/) and is built with
 Sphinx for [Read the Docs](https://readthedocs.org/) (see
-[.readthedocs.yaml](.readthedocs.yaml)). Build it locally with:
+[.readthedocs.yaml](.readthedocs.yaml)). Three runnable Jupyter notebook
+tutorials — a pipeline quickstart, a five-method comparison, and an
+eddy-covariance calibration walkthrough — live in
+[docs/tutorials/](docs/tutorials/); each is self-contained (it generates its
+own synthetic data) and is rendered into the documentation with its outputs.
+Build the docs locally with:
 
 ```bash
 pip install -r docs/requirements.txt

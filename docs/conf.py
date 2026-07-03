@@ -28,18 +28,15 @@ extensions = [
     "sphinx.ext.intersphinx",
     "sphinx.ext.mathjax",
     "sphinx.ext.viewcode",
-    "myst_parser",
+    # myst-nb bundles myst-parser (Markdown) and adds Jupyter-notebook sources
+    # (docs/tutorials/*.ipynb). Do not list myst_parser alongside it.
+    "myst_nb",
 ]
 
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "**/.ipynb_checkpoints"]
 
-source_suffix = {
-    ".rst": "restructuredtext",
-    ".md": "markdown",
-}
-
-# -- MyST (Markdown) ---------------------------------------------------------
+# -- MyST (Markdown) / MyST-NB (notebooks) ------------------------------------
 
 myst_enable_extensions = [
     "dollarmath",  # $...$ and $$...$$ math (used by theory.md)
@@ -48,6 +45,11 @@ myst_enable_extensions = [
 # Generate GitHub-style anchors for headings so intra-page links in
 # theory.md keep working.
 myst_heading_anchors = 3
+
+# The tutorial notebooks are committed with their outputs already embedded;
+# do not re-execute them during the docs build (keeps Read the Docs builds
+# fast and free of runtime dependencies like matplotlib).
+nb_execution_mode = "off"
 
 # -- autodoc / autosummary / napoleon ----------------------------------------
 
