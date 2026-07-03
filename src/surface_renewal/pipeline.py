@@ -37,7 +37,7 @@ class PipelineConfig:
         Sampling frequency in Hz (e.g., 10 or 20).
     block : str, default "30min"
         Time-averaging period for SR fluxes (pandas offset alias).
-    method : {"snyder", "chen97"}, default "snyder"
+    method : {"snyder", "chen97", "fvs", "castellvi", "wavelet"}, default "snyder"
         Surface-renewal method to compute uncalibrated H.
     rotation : {"planar_fit", "double", "none"}, default "planar_fit"
         Wind rotation scheme used for diagnostics/u* (Chen97) and consistency.
