@@ -36,7 +36,7 @@ from __future__ import annotations
 import math
 from typing import NamedTuple
 
-from ..most import obukhov_length, sigma_T_over_Tstar
+from ..most import G, obukhov_length, sigma_T_over_Tstar
 
 
 class FVSResult(NamedTuple):
@@ -69,6 +69,115 @@ def _nan_result(n_iter: int = 0) -> FVSResult:
     """Return an all-NaN, non-converged result."""
     nan = float("nan")
     return FVSResult(H=nan, Tstar=nan, zeta=nan, n_iter=n_iter, converged=False)
+
+
+def estimate_H_free_convection(
+    *,
+    sigma_T: float,
+    T_K: float,
+    z_m: float,
+    rho: float = 1.2,
+    cp: float = 1005.0,
+    c_fc: float = 0.9,
+) -> float:
+    r"""Free-convection sensible heat flux from temperature variance.
+
+    In the strongly unstable, low-wind (free-convection) limit
+    :math:`-z/L \gg 1`, the friction velocity drops out of the surface-layer
+    scaling and the heat flux can be recovered from the temperature standard
+    deviation alone (Tillman 1972). This provides a fallback for the
+    :math:`u_*`-based methods (``chen97``, ``fvs``, ``castellvi``), which
+    degrade as :math:`u_* \to 0`.
+
+    .. math::
+
+        H_{fc} = \rho\, c_p\, c_{fc}\, \sigma_T^{3/2}\,
+                 \sqrt{\frac{g\, z_m}{T_K}}
+
+    Derivation of :math:`c_{fc}`
+    ---------------------------
+    Start from the Tillman (1972) flux–variance relation used elsewhere in this
+    package, in its free-convection limit (:math:`-\zeta \gg c_2`, so the
+    :math:`c_2` offset is negligible):
+
+    .. math::
+
+        \frac{\sigma_T}{|T_*|} = c_1\,(-\zeta)^{-1/3},
+        \qquad \zeta = \frac{z}{L},
+        \qquad L = -\frac{\rho c_p T_K u_*^3}{\kappa g H}.
+
+    With :math:`|T_*| = H/(\rho c_p u_*)` and
+    :math:`-\zeta = \kappa g z H / (\rho c_p T_K u_*^3)`, substituting and
+    simplifying makes :math:`u_*` cancel exactly, leaving
+
+    .. math::
+
+        H = \rho c_p\, c_1^{-3/2}\, \kappa^{1/2}\, \sigma_T^{3/2}\,
+            \sqrt{\frac{g z}{T_K}},
+
+    i.e. the closed form above with
+
+    .. math::
+
+        c_{fc} = c_1^{-3/2}\, \kappa^{1/2}.
+
+    With the module's Tillman constant :math:`c_1 = 0.95` and
+    :math:`\kappa = 0.41`, this evaluates to
+    :math:`c_{fc} = 0.95^{-3/2}\,\sqrt{0.41} \approx 0.69`. The default of
+    ``0.9`` is the higher, widely-cited practical value (free-convection
+    coefficients reported in the literature cluster in the ~0.9 range depending
+    on the exact similarity constants and whether :math:`\kappa` is folded in);
+    it is exposed as a parameter so it can be replaced by the site-specific
+    :math:`c_1^{-3/2}\sqrt{\kappa}` value or an empirical calibration.
+
+    Dimensional check
+    -----------------
+    ``sqrt(g * z_m / T_K)`` has units ``sqrt(m s^-2 * m / K) = m s^-1 K^-1/2``;
+    ``sigma_T**(3/2)`` has units ``K^(3/2)``. Their product is
+    ``K m s^-1``, and multiplying by ``rho * cp`` (``kg m^-3 * J kg^-1 K^-1``
+    = ``J m^-3 K^-1``) gives ``J m^-2 s^-1 = W m^-2``. ✓
+
+    Parameters
+    ----------
+    sigma_T : float
+        Standard deviation of temperature over the averaging block (K).
+    T_K : float
+        Block-mean air temperature (K).
+    z_m : float
+        Measurement height above the zero-plane displacement (m).
+    rho : float, default 1.2
+        Air density (kg m⁻³).
+    cp : float, default 1005.0
+        Specific heat of air at constant pressure (J kg⁻¹ K⁻¹).
+    c_fc : float, default 0.9
+        Dimensionless free-convection coefficient (see derivation above).
+
+    Returns
+    -------
+    float
+        The **magnitude** of the sensible heat flux :math:`|H| = H_{fc}`
+        (W m⁻²), which is positive by construction. Returns NaN for non-finite
+        or non-physical (:math:`\sigma_T < 0`, :math:`T_K \le 0`,
+        :math:`z_m \le 0`) input.
+
+    Notes
+    -----
+    This estimate is valid **only** for the unstable, upward-heat-flux case; it
+    returns :math:`|H| > 0` and carries no directional information. It must
+    **not** be applied at night (stable, :math:`H < 0`): the free-convection
+    limit does not exist there, and the formula would return a spurious
+    positive flux. Callers are responsible for restricting it to unstable
+    blocks (e.g. via a stability screen on :math:`\zeta`).
+
+    References
+    ----------
+    Tillman, J. E. (1972). See module docstring for the full citation.
+    """
+    if not all(math.isfinite(x) for x in (sigma_T, T_K, z_m, rho, cp, c_fc)):
+        return float("nan")
+    if sigma_T < 0.0 or T_K <= 0.0 or z_m <= 0.0:
+        return float("nan")
+    return float(rho * cp * c_fc * sigma_T ** 1.5 * math.sqrt(G * z_m / T_K))
 
 
 def estimate_H_fvs(

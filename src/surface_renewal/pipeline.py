@@ -14,11 +14,12 @@ from .preprocess.rotation import planar_fit, double_rotation, friction_velocity,
 from .preprocess.stability import compute_block_diagnostics, stability_ok, BlockDiagnostics
 from .preprocess.calibration import rho_air_ideal, cp_air_const, Calibration  # optional helpers
 from .structure import estimate_CT2
+from .most import obukhov_length
 
 # Methods
 from .methods.snyder import estimate_H_snyder, SnyderResult  # Snyder96 cubic-ramp  :contentReference[oaicite:3]{index=3}
 from .methods.chen97 import estimate_H_chen, ChenResult       # Chen97 variant       :contentReference[oaicite:4]{index=4}
-from .methods.fvs import estimate_H_fvs, FVSResult            # flux–variance similarity
+from .methods.fvs import estimate_H_fvs, FVSResult, estimate_H_free_convection  # flux–variance similarity
 from .methods.castellvi import estimate_H_castellvi, CastellviResult  # Castellví04 calibration-free
 
 
@@ -69,6 +70,21 @@ class PipelineConfig:
         zero-plane displacement ``d ≈ 0.66 * canopy_height``. Methods that
         require it (``fvs``, ``castellvi``) will raise a ``ValueError`` at
         config time if it is left as ``None``.
+    free_convection_fallback : bool, default False
+        If True, strongly unstable, low-wind blocks fall back to the
+        free-convection estimate :func:`~surface_renewal.methods.fvs.\
+estimate_H_free_convection` when the primary :math:`u_*`-based method
+        (``chen97``, ``fvs``, ``castellvi``) is expected to degrade. The
+        substitution happens per block in :func:`_compute_block_flux`; the
+        chosen estimate is recorded in the ``flux_method_used`` output column.
+        Requires ``z_m`` to be set.
+    fc_ustar_max : float, default 0.1
+        Upper :math:`u_*` bound (m s⁻¹) for the fallback: it is only considered
+        when the block ``ustar`` is below this value.
+    fc_zeta_max : float, default -0.5
+        Upper stability bound: the fallback is only applied when the block's
+        :math:`\\zeta = z_m/L` (from ``obukhov_length`` of the primary
+        :math:`H`) is *below* this (i.e. sufficiently unstable).
     """
     fs: float
     block: str = "30min"
@@ -90,6 +106,10 @@ class PipelineConfig:
     daytime_only: bool = False
     z_m: Optional[float] = None   # sonic/thermocouple height above
                                   # zero-plane displacement (m)
+
+    free_convection_fallback: bool = False
+    fc_ustar_max: float = 0.1     # m/s
+    fc_zeta_max: float = -0.5     # apply when zeta < this
 
 
 def _ensure_df(
@@ -293,6 +313,37 @@ def _compute_block_flux(
         friction_velocity(grp, u_col="u_r", v_col="v_r", w_col="w_r", method="global").iloc[0]
     )
 
+    # Free-convection fallback for strongly unstable, low-wind blocks, where the
+    # u*-based methods (chen97, fvs, castellvi) degrade as u* -> 0. When the flag
+    # is set and the primary method is u*-based, check whether this block is both
+    # low-wind (ustar < fc_ustar_max) and sufficiently unstable: zeta is computed
+    # from obukhov_length of the primary H, so the test is consistent across
+    # methods (including chen97, which does not otherwise fill zeta).
+    flux_method_used = "primary"
+    if (
+        cfg.free_convection_fallback
+        and cfg.method in ("chen97", "fvs", "castellvi")
+        and np.isfinite(H_uncal)
+        and ustar_val < cfg.fc_ustar_max
+    ):
+        if cfg.z_m is None:
+            raise ValueError("free_convection_fallback requires cfg.z_m")
+        T_mean = float(np.nanmean(grp["T"].to_numpy(float)))
+        T_K_mean = T_mean + 273.15 if T_mean < 150.0 else T_mean
+        L_sw = obukhov_length(ustar_val, T_K_mean, H_uncal, rho=rho, cp=cp)
+        zeta_sw = cfg.z_m / L_sw if np.isfinite(L_sw) else np.nan
+        # Free convection implies H > 0. Only substitute when the primary
+        # estimate is itself positive; if the primary H was negative (stable /
+        # downward flux), keep it rather than force a spurious positive flux.
+        if np.isfinite(zeta_sw) and zeta_sw < cfg.fc_zeta_max and H_uncal > 0.0:
+            H_uncal = estimate_H_free_convection(
+                sigma_T=diag.stdT, T_K=T_K_mean, z_m=cfg.z_m, rho=rho, cp=cp,
+            )
+            flux_method_used = "free_convection"
+        # Report the switch-diagnostic zeta when the primary method left it NaN.
+        if not np.isfinite(zeta):
+            zeta = zeta_sw
+
     # Fraction of this block's records flagged by the QC range screen.
     frac_flagged = grp["qc_range_flag"].mean()
 
@@ -321,6 +372,7 @@ def _compute_block_flux(
         "frac_qc_flagged": float(frac_flagged),
         "CT2": float(CT2),
         "CT2_r2": float(CT2_r2),
+        "flux_method_used": flux_method_used,
     }
 
 
@@ -386,7 +438,7 @@ def run_surface_renewal(
         rows.append((grp.index[-1], res))
 
     if not rows:
-        cols = ["H_uncal", "LE_resid", "passed", "ustar", "U_mean", "tau_star", "dt_opt", "zeta", "alpha_sr", "S3_tau", "stdT", "rho", "cp", "frac_qc_flagged", "CT2", "CT2_r2"]
+        cols = ["H_uncal", "LE_resid", "passed", "ustar", "U_mean", "tau_star", "dt_opt", "zeta", "alpha_sr", "S3_tau", "stdT", "rho", "cp", "frac_qc_flagged", "CT2", "CT2_r2", "flux_method_used"]
         if alpha is not None:
             cols.append("H_cal")
             cols.append("LE_cal")

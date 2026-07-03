@@ -53,6 +53,14 @@ class ComputeConfig:
         Measurement height above the zero-plane displacement (``z_sensor - d``,
         with ``d ≈ 0.66 * canopy_height``), in metres. Required by
         height-dependent methods (``fvs``, ``castellvi``).
+    free_convection_fallback : bool, default False
+        Enable the free-convection fallback for strongly unstable, low-wind
+        blocks (records the choice in the ``flux_method_used`` column). Requires
+        ``z_m``. See :class:`~surface_renewal.pipeline.PipelineConfig`.
+    fc_ustar_max : float, default 0.1
+        Upper u* bound (m s⁻¹) for the fallback.
+    fc_zeta_max : float, default -0.5
+        Upper zeta bound; fallback applies when zeta < this.
     """
     fs: float
     block: str = "30min"
@@ -74,6 +82,10 @@ class ComputeConfig:
     daytime_only: bool = False
     z_m: Optional[float] = None
 
+    free_convection_fallback: bool = False
+    fc_ustar_max: float = 0.1
+    fc_zeta_max: float = -0.5
+
     def to_pipeline_config(self) -> PipelineConfig:
         """Translate to the canonical :class:`PipelineConfig`."""
         return PipelineConfig(
@@ -94,6 +106,9 @@ class ComputeConfig:
             stability_stdT=self.stability_stdT,
             daytime_only=self.daytime_only,
             z_m=self.z_m,
+            free_convection_fallback=self.free_convection_fallback,
+            fc_ustar_max=self.fc_ustar_max,
+            fc_zeta_max=self.fc_zeta_max,
         )
 
 
@@ -154,6 +169,14 @@ def _build_argparser():
     p.add_argument("--z-m", type=float, default=None,
                    help="Measurement height above zero-plane displacement (m); z_sensor - d, d≈0.66*canopy height.")
 
+    p.add_argument("--free-convection-fallback", action="store_true",
+                   help="Fall back to the free-convection H estimate on strongly "
+                        "unstable, low-wind blocks (requires --z-m).")
+    p.add_argument("--fc-ustar-max", type=float, default=0.1,
+                   help="Upper u* bound (m/s) for the free-convection fallback.")
+    p.add_argument("--fc-zeta-max", type=float, default=-0.5,
+                   help="Fallback applies when block zeta < this value.")
+
     p.add_argument("--time-col", default=None, help="Name of timestamp column if needed.")
     p.add_argument("--out", default=None, help="Optional output Parquet/CSV path.")
     return p
@@ -178,6 +201,9 @@ def _to_cfg(ns) -> ComputeConfig:
         stability_stdT=ns.min_stdT,
         daytime_only=ns.daytime_only,
         z_m=ns.z_m,
+        free_convection_fallback=ns.free_convection_fallback,
+        fc_ustar_max=ns.fc_ustar_max,
+        fc_zeta_max=ns.fc_zeta_max,
     )
 
 
