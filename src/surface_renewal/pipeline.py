@@ -389,24 +389,35 @@ def _compute_block_flux(
 
 
 def run_surface_renewal(
-    data: pd.DataFrame | str,
+    data: pd.DataFrame | str | None = None,
     *,
     cfg: PipelineConfig,
     time_col: Optional[str] = None,
     alpha: Optional[float | Calibration] = None,
+    preprocessed: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """End-to-end surface-renewal pipeline → block-level fluxes & diagnostics.
 
     Parameters
     ----------
-    data : pd.DataFrame or str
+    data : pd.DataFrame or str, optional
         Either a preloaded high-frequency DataFrame with columns at least
         ``["T","u","v","w"]`` (optionally ``["Rn","G"]``), or a path to a CSV/Parquet file.
-        If a path is provided, `read_highfreq` will be used.
+        If a path is provided, `read_highfreq` will be used. May be ``None`` only
+        when ``preprocessed`` is supplied.
     cfg : PipelineConfig
         Configuration for sampling frequency, despiking, rotation, method, screening, etc.
     time_col : str, optional
         If `data` is a table without a DatetimeIndex, name of the timestamp column.
+    preprocessed : pd.DataFrame, optional
+        A DataFrame already run through :func:`_ensure_df` + :func:`_preprocess_df`
+        (i.e. despiked, rotated, carrying ``u_r``/``v_r``/``w_r`` and
+        ``qc_range_flag``). When supplied, the read + preprocess stages are
+        skipped and this frame is used directly. This lets callers such as
+        :func:`surface_renewal.methods.analysis.compare_methods` preprocess once
+        and evaluate several methods on the identical cleaned series without
+        repeating the expensive despike/rotation work. When given, ``data`` and
+        ``time_col`` are ignored.
     alpha : float or Calibration, optional
         Optional block-scale calibration applied to ``H_uncal`` to produce a
         calibrated sensible heat flux ``H_cal``:
@@ -435,11 +446,17 @@ def run_surface_renewal(
     - Snyder method uses S2/S3/S5 + Cardano cubic recovery; Chen97 uses S3(τ*), u*,
       and τ* scaling; both follow the implementations in `methods/`. :contentReference[oaicite:8]{index=8} :contentReference[oaicite:9]{index=9}
     """
-    # 0) Ensure df and required columns
-    df = _ensure_df(data, fs=cfg.fs, time_col=time_col)
-
-    # 1) Preprocess (despike → rotation)
-    df_prep = _preprocess_df(df, cfg)
+    # 0) + 1) Obtain the despiked/rotated frame, reusing a caller-supplied one
+    # when available so preprocessing is not repeated across methods.
+    if preprocessed is not None:
+        df_prep = preprocessed
+    else:
+        if data is None:
+            raise ValueError("run_surface_renewal requires `data` when `preprocessed` is None")
+        # 0) Ensure df and required columns
+        df = _ensure_df(data, fs=cfg.fs, time_col=time_col)
+        # 1) Preprocess (despike → rotation)
+        df_prep = _preprocess_df(df, cfg)
 
     # 2) Compute per-block fluxes and diagnostics
     rows = []

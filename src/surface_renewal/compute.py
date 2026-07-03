@@ -179,6 +179,11 @@ def _build_argparser():
 
     p.add_argument("--time-col", default=None, help="Name of timestamp column if needed.")
     p.add_argument("--out", default=None, help="Optional output Parquet/CSV path.")
+
+    p.add_argument("--compare", action="store_true",
+                   help="Run all SR methods on the same data and print the "
+                        "pairwise method-agreement table (ignores --method). "
+                        "Height-dependent methods need --z-m.")
     return p
 
 
@@ -216,6 +221,24 @@ def main(argv: Optional[list[str]] = None) -> int:
     ns = parser.parse_args(argv)
 
     cfg = _to_cfg(ns)
+
+    if ns.compare:
+        # Run every SR method on the same data and report where they agree.
+        from .methods.analysis import compare_methods, method_agreement
+
+        wide = compare_methods(
+            ns.input, cfg=cfg.to_pipeline_config(), time_col=ns.time_col,
+        )
+        agree = method_agreement(wide)
+        with pd.option_context("display.max_columns", None, "display.width", 160):
+            print("Per-block method comparison (tail):")
+            print(wide.tail(10))
+            print("\nPairwise method agreement:")
+            print(agree)
+        if ns.out:
+            write_flux_timeseries(wide, ns.out, metadata={"mode": "compare", "block": cfg.block})
+        return 0
+
     # Let pipeline handle reading; we could also pre-read to validate here.
     out = compute(ns.input, cfg=cfg, time_col=ns.time_col)
 
