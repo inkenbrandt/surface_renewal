@@ -80,6 +80,95 @@ def _cardano_real_roots(p: float, q: float) -> np.ndarray:
 # Snyder 1996 cubic-ramp workflow (Van Atta linearized model)
 # --------------------------------------------------------------------------- #
 
+def recover_ramp(
+    T: np.ndarray,
+    *,
+    hz: float,
+    lags_s: tuple[float, float] = (0.2, 8.0),
+) -> Tuple[float, float, float]:
+    """Recover ramp amplitude ``A`` and period ``τ`` via Van Atta's cubic model.
+
+    This is the ``(A, τ, Δt*)`` recovery core shared by the surface-renewal
+    methods. :func:`estimate_H_snyder` wraps it to form ``H = ρ c_p (A/τ)`` and
+    :func:`surface_renewal.methods.castellvi.estimate_H_castellvi` reuses it
+    before applying the Castellví (2004) analytic weighting factor. Keeping the
+    recovery in one function means both methods see an identical ``(A, τ)``.
+
+    Steps (block level)
+    -------------------
+    1) Compute S2, S3, S5 of temperature across a lag scan
+       (Δt ∈ ``lags_s`` seconds).
+    2) Choose Δt* by ``argmax |S3(Δt)| / Δt`` (see
+       :func:`surface_renewal.structure.pick_optimal_lag`).
+    3) Form the depressed cubic for **A**:
+           A^3 + p A + q = 0,
+       with ``p = 10·S2 − (S5/S3)`` and ``q = 10·S3`` (evaluated at Δt*).
+    4) Select **A** as the **maximum real root**.
+    5) Recover τ from ``τ = − A^3 · Δt* / S3(Δt*)``.
+
+    Parameters
+    ----------
+    T : array_like
+        High-frequency temperature series (K or °C after normalization).
+    hz : float
+        Sampling frequency (Hz), e.g., 10 or 20 Hz.
+    lags_s : (float, float), default (0.2, 8.0)
+        Inclusive range for lag times (seconds) to scan.
+
+    Returns
+    -------
+    (A, tau, dt_opt) : tuple of float
+        Ramp amplitude (K), ramp period (s), and the optimal lag Δt* (s). ``A``
+        and ``tau`` are ``NaN`` for a degenerate recovery; ``dt_opt`` is still
+        returned whenever a lag could be selected (``NaN`` only if the series is
+        too short or the lag grid is empty).
+    """
+    T = np.asarray(T, float)
+    n = T.size
+    if n < max(64, int(hz * 2)):
+        return (np.nan, np.nan, np.nan)
+
+    # Build lag grid in samples
+    kmin = max(1, int(lags_s[0] * hz))
+    kmax = min(n // 4, int(lags_s[1] * hz))
+    if kmax <= kmin:
+        return (np.nan, np.nan, np.nan)
+    lags = np.arange(kmin, kmax, dtype=int)
+
+    # Structure functions at candidate lags
+    # (import here to avoid circulars at package import time)
+    from ..structure import structure_functions, pick_optimal_lag
+    S = structure_functions(T, lags, orders=[2, 3, 5])
+
+    k_opt = pick_optimal_lag(S[3], lags)  # e.g., argmax |S3|/lag
+    j = int(np.where(lags == k_opt)[0][0])
+    S2 = float(S[2][j]); S3 = float(S[3][j]); S5 = float(S[5][j])
+    dt_opt = float(k_opt) / float(hz)
+
+    # Guard degenerate divisions
+    if not np.isfinite(S3) or S3 == 0.0:
+        return (np.nan, np.nan, dt_opt)
+
+    # Cubic coefficients (Van Atta linearized relations)
+    p = (10.0 * S2) - (S5 / S3)
+    q = 10.0 * S3
+
+    roots = _cardano_real_roots(p, q)
+    roots = roots[np.isfinite(roots)]
+    if roots.size == 0:
+        return (np.nan, np.nan, dt_opt)
+
+    # Practice in Snyder/Chen implementations: take the maximum real root
+    A = float(np.max(roots))
+
+    # Recover τ; must be positive and finite
+    tau = - (A ** 3) * dt_opt / S3
+    if not (np.isfinite(tau) and (tau > 0.0)):
+        return (np.nan, np.nan, dt_opt)
+
+    return (A, float(tau), dt_opt)
+
+
 def estimate_H_snyder(
     T: np.ndarray,
     *,
@@ -124,51 +213,14 @@ def estimate_H_snyder(
     Notes
     -----
     - The implementation follows your current draft (S2/S3/S5, cubic coefficients,
-      maximum real root choice, τ relation, H scaling). Keep an external, site/period
-      calibration (alpha) to reconcile H with EC where desired.
+      maximum real root choice, τ relation, H scaling). The ``(A, τ, Δt*)``
+      recovery lives in :func:`recover_ramp`; this function scales it to H. Keep
+      an external, site/period calibration (alpha) to reconcile H with EC where
+      desired.
     """
-    T = np.asarray(T, float)
-    n = T.size
-    if n < max(64, int(hz * 2)):
-        return SnyderResult(A=np.nan, tau=np.nan, H=np.nan, dt_opt=np.nan)
-
-    # Build lag grid in samples
-    kmin = max(1, int(lags_s[0] * hz))
-    kmax = min(n // 4, int(lags_s[1] * hz))
-    if kmax <= kmin:
-        return SnyderResult(A=np.nan, tau=np.nan, H=np.nan, dt_opt=np.nan)
-    lags = np.arange(kmin, kmax, dtype=int)
-
-    # Structure functions at candidate lags
-    # (import here to avoid circulars at package import time)
-    from ..structure import structure_functions, pick_optimal_lag
-    S = structure_functions(T, lags, orders=[2, 3, 5])
-
-    k_opt = pick_optimal_lag(S[3], lags)  # e.g., argmax |S3|/lag
-    j = int(np.where(lags == k_opt)[0][0])
-    S2 = float(S[2][j]); S3 = float(S[3][j]); S5 = float(S[5][j])
-    dt_opt = float(k_opt) / float(hz)
-
-    # Guard degenerate divisions
-    if not np.isfinite(S3) or S3 == 0.0:
-        return SnyderResult(A=np.nan, tau=np.nan, H=np.nan, dt_opt=dt_opt)
-
-    # Cubic coefficients (Van Atta linearized relations)
-    p = (10.0 * S2) - (S5 / S3)
-    q = 10.0 * S3
-
-    roots = _cardano_real_roots(p, q)
-    roots = roots[np.isfinite(roots)]
-    if roots.size == 0:
-        return SnyderResult(A=np.nan, tau=np.nan, H=np.nan, dt_opt=dt_opt)
-
-    # Practice in Snyder/Chen implementations: take the maximum real root
-    A = float(np.max(roots))
-
-    # Recover τ; must be positive and finite
-    tau = - (A ** 3) * dt_opt / S3
-    if not (np.isfinite(tau) and (tau > 0.0)):
-        return SnyderResult(A=np.nan, tau=np.nan, H=np.nan, dt_opt=dt_opt)
+    A, tau, dt_opt = recover_ramp(T, hz=hz, lags_s=lags_s)
+    if not (np.isfinite(A) and np.isfinite(tau)):
+        return SnyderResult(A=A, tau=tau, H=np.nan, dt_opt=dt_opt)
 
     # Sensible heat (uncalibrated).  Calibrate later at block scale if desired.
     dTdt = A / tau

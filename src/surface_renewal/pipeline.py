@@ -19,9 +19,10 @@ from .structure import estimate_CT2
 from .methods.snyder import estimate_H_snyder, SnyderResult  # Snyder96 cubic-ramp  :contentReference[oaicite:3]{index=3}
 from .methods.chen97 import estimate_H_chen, ChenResult       # Chen97 variant       :contentReference[oaicite:4]{index=4}
 from .methods.fvs import estimate_H_fvs, FVSResult            # flux–variance similarity
+from .methods.castellvi import estimate_H_castellvi, CastellviResult  # Castellví04 calibration-free
 
 
-MethodName = Literal["snyder", "chen97", "fvs"]
+MethodName = Literal["snyder", "chen97", "fvs", "castellvi"]
 
 
 @dataclass
@@ -213,7 +214,8 @@ def _compute_block_flux(
     diag.passed = passed
 
     # Compute uncalibrated H via selected SR method
-    zeta = np.nan  # only the height-dependent FVS method fills this in
+    zeta = np.nan       # only height-dependent methods (fvs, castellvi) fill this in
+    alpha_sr = np.nan   # Castellví analytic weighting factor; NaN for other methods
     if cfg.method == "snyder":
         sres: SnyderResult = estimate_H_snyder(
             grp["T"].to_numpy(float), hz=hz, rho=rho, cp=cp
@@ -241,6 +243,26 @@ def _compute_block_flux(
         dt_opt = diag.tau_opt
         S3_tau = diag.S3_tau
         zeta = fres.zeta
+    elif cfg.method == "castellvi":
+        if cfg.z_m is None:
+            raise ValueError("method='castellvi' requires cfg.z_m")
+        # Block-mean temperature in Kelvin (accept Celsius or Kelvin inputs).
+        T_mean = float(np.nanmean(grp["T"].to_numpy(float)))
+        T_K_mean = T_mean + 273.15 if T_mean < 150.0 else T_mean
+        cvres: CastellviResult = estimate_H_castellvi(
+            grp["T"].to_numpy(float),
+            hz=hz,
+            ustar=diag.u_star,
+            T_K=T_K_mean,
+            z_m=cfg.z_m,
+            rho=rho, cp=cp,
+        )  # calibration-free: analytic alpha from SR + MOST (ramp sign gives H sign)
+        H_uncal = cvres.H
+        tau_star = cvres.tau
+        dt_opt = cvres.tau
+        S3_tau = diag.S3_tau
+        zeta = cvres.zeta
+        alpha_sr = cvres.alpha
     else:
         cres: ChenResult = estimate_H_chen(
             T=grp["T"].to_numpy(float),
@@ -291,6 +313,7 @@ def _compute_block_flux(
         "tau_star": float(tau_star),
         "dt_opt": float(dt_opt),
         "zeta": float(zeta) if np.isfinite(zeta) else np.nan,
+        "alpha_sr": float(alpha_sr) if np.isfinite(alpha_sr) else np.nan,
         "S3_tau": float(S3_tau) if np.isfinite(S3_tau) else np.nan,
         "stdT": float(np.nanstd(grp["T"].to_numpy(float))),
         "rho": float(rho),
@@ -363,7 +386,7 @@ def run_surface_renewal(
         rows.append((grp.index[-1], res))
 
     if not rows:
-        cols = ["H_uncal", "LE_resid", "passed", "ustar", "U_mean", "tau_star", "dt_opt", "zeta", "S3_tau", "stdT", "rho", "cp", "frac_qc_flagged", "CT2", "CT2_r2"]
+        cols = ["H_uncal", "LE_resid", "passed", "ustar", "U_mean", "tau_star", "dt_opt", "zeta", "alpha_sr", "S3_tau", "stdT", "rho", "cp", "frac_qc_flagged", "CT2", "CT2_r2"]
         if alpha is not None:
             cols.append("H_cal")
             cols.append("LE_cal")
