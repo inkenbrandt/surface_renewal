@@ -21,9 +21,10 @@ from .methods.snyder import estimate_H_snyder, SnyderResult  # Snyder96 cubic-ra
 from .methods.chen97 import estimate_H_chen, ChenResult       # Chen97 variant       :contentReference[oaicite:4]{index=4}
 from .methods.fvs import estimate_H_fvs, FVSResult, estimate_H_free_convection  # flux–variance similarity
 from .methods.castellvi import estimate_H_castellvi, CastellviResult  # Castellví04 calibration-free
+from .methods.wavelet import detect_ramps_wavelet, WaveletRampResult  # Collineau & Brunet 1993
 
 
-MethodName = Literal["snyder", "chen97", "fvs", "castellvi"]
+MethodName = Literal["snyder", "chen97", "fvs", "castellvi", "wavelet"]
 
 
 @dataclass
@@ -236,6 +237,7 @@ def _compute_block_flux(
     # Compute uncalibrated H via selected SR method
     zeta = np.nan       # only height-dependent methods (fvs, castellvi) fill this in
     alpha_sr = np.nan   # Castellví analytic weighting factor; NaN for other methods
+    n_ramps = 0         # only the wavelet method reports a ramp count
     if cfg.method == "snyder":
         sres: SnyderResult = estimate_H_snyder(
             grp["T"].to_numpy(float), hz=hz, rho=rho, cp=cp
@@ -283,6 +285,15 @@ def _compute_block_flux(
         S3_tau = diag.S3_tau
         zeta = cvres.zeta
         alpha_sr = cvres.alpha
+    elif cfg.method == "wavelet":
+        wres: WaveletRampResult = detect_ramps_wavelet(
+            grp["T"].to_numpy(float), hz=hz, rho=rho, cp=cp,
+        )  # wavelet ramp detection: H = rho*cp*A/tau (uncalibrated)
+        H_uncal = wres.H
+        tau_star = wres.tau
+        dt_opt = wres.tau
+        S3_tau = np.nan
+        n_ramps = wres.n_ramps
     else:
         cres: ChenResult = estimate_H_chen(
             T=grp["T"].to_numpy(float),
@@ -363,6 +374,7 @@ def _compute_block_flux(
         "U_mean": U,
         "tau_star": float(tau_star),
         "dt_opt": float(dt_opt),
+        "n_ramps": int(n_ramps),
         "zeta": float(zeta) if np.isfinite(zeta) else np.nan,
         "alpha_sr": float(alpha_sr) if np.isfinite(alpha_sr) else np.nan,
         "S3_tau": float(S3_tau) if np.isfinite(S3_tau) else np.nan,
@@ -438,7 +450,7 @@ def run_surface_renewal(
         rows.append((grp.index[-1], res))
 
     if not rows:
-        cols = ["H_uncal", "LE_resid", "passed", "ustar", "U_mean", "tau_star", "dt_opt", "zeta", "alpha_sr", "S3_tau", "stdT", "rho", "cp", "frac_qc_flagged", "CT2", "CT2_r2", "flux_method_used"]
+        cols = ["H_uncal", "LE_resid", "passed", "ustar", "U_mean", "tau_star", "dt_opt", "n_ramps", "zeta", "alpha_sr", "S3_tau", "stdT", "rho", "cp", "frac_qc_flagged", "CT2", "CT2_r2", "flux_method_used"]
         if alpha is not None:
             cols.append("H_cal")
             cols.append("LE_cal")

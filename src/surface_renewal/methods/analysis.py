@@ -1,27 +1,26 @@
 """General SR analysis utilities (merges analysis_strfnc.py)."""
 from __future__ import annotations
+
+import warnings
+
 import numpy as np
-import pandas as pd
+
+from .wavelet import detect_ramps_wavelet
+
 
 def detect_ramps(T: np.ndarray, fs: int) -> dict:
     """Detect ramp events and return stats (amplitude, duration, counts).
 
-    Conditional-sampling ramp detection
-    -----------------------------------
-    Surface-renewal theory models the scalar (here temperature) time series as a
-    sequence of coherent "ramp" structures: a gradual enrichment/depletion of the
-    scalar followed by a sudden renewal (sweep/ejection). This routine uses a
-    simple amplitude-threshold conditional sampling scheme:
-
-    1. The series is de-trended by subtracting its block mean so that only the
-       fluctuating part ``T'`` is analysed.
-    2. A ramp is flagged wherever ``T'`` crosses a threshold of half a standard
-       deviation. Falling below ``-0.5*std`` marks a cold sweep and rising above
-       ``+0.5*std`` marks a warm ramp; the sign of the first crossing sets the
-       ramp direction.
-    3. For each detected ramp the amplitude (peak-to-trough range, K) and the
-       duration (number of samples divided by the sampling frequency, s) are
-       recorded.
+    .. deprecated::
+        This amplitude-threshold conditional-sampling stub has been superseded by
+        the wavelet-based ramp detector
+        :func:`surface_renewal.methods.wavelet.detect_ramps_wavelet`
+        (Collineau & Brunet 1993), which resolves the dominant ramp scale and
+        counts renewals from wavelet zero-crossings. ``detect_ramps`` now
+        delegates to it and remains only for backward compatibility; new code
+        should call :func:`detect_ramps_wavelet` directly to obtain the full
+        :class:`~surface_renewal.methods.wavelet.WaveletRampResult` (signed
+        amplitude, dominant period, event count, peak scale and uncalibrated H).
 
     Parameters
     ----------
@@ -35,60 +34,26 @@ def detect_ramps(T: np.ndarray, fs: int) -> dict:
     dict
         Dictionary with keys ``"amp"`` (list[float], amplitudes in K),
         ``"tau"`` (list[float], durations in s) and ``"count"`` (int, number of
-        detected ramps).
+        detected ramps), reconstructed from the wavelet result for compatibility.
     """
-    empty = {"amp": [], "tau": [], "count": 0}
+    warnings.warn(
+        "detect_ramps is deprecated; use "
+        "surface_renewal.methods.wavelet.detect_ramps_wavelet instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
+    empty = {"amp": [], "tau": [], "count": 0}
     if T is None or fs is None or fs <= 0:
         return empty
 
-    T = np.asarray(T, dtype=float).ravel()
-    if T.size == 0 or np.all(np.isnan(T)):
-        return empty
+    res = detect_ramps_wavelet(np.asarray(T, dtype=float).ravel(), hz=float(fs))
+    if not np.isfinite(res.A) or res.n_ramps == 0:
+        return {"amp": [], "tau": [], "count": int(res.n_ramps)}
 
-    # Drop NaNs, then require enough samples for a ramp of at least 2/fs seconds.
-    T = T[~np.isnan(T)]
-    if T.size < 2:
-        return empty
-
-    # 1. De-trend by removing the block mean.
-    Tp = T - np.mean(T)
-    std = np.std(Tp)
-    if std == 0:
-        return empty
-
-    thr = 0.5 * std
-    # Sign of the excursion for each sample: -1 below -thr, +1 above +thr, 0 else.
-    state = np.zeros(Tp.size, dtype=int)
-    state[Tp < -thr] = -1
-    state[Tp > thr] = 1
-
-    amps: list[float] = []
-    taus: list[float] = []
-
-    min_samples = 2  # a ramp must span at least 2/fs seconds, i.e. >= 2 samples
-
-    start = None
-    sign = 0
-    for i, s in enumerate(state):
-        if s != 0 and start is None:
-            # A new ramp begins on the first threshold crossing.
-            start = i
-            sign = s
-        elif start is not None and (s == 0 or s == -sign):
-            # Ramp ends when the signal returns to the neutral band or flips sign.
-            seg = Tp[start:i]
-            if seg.size >= min_samples:
-                amps.append(float(np.ptp(seg)))
-                taus.append(seg.size / fs)
-            start = None if s == 0 else i
-            sign = 0 if s == 0 else s
-
-    # Close a ramp still open at the end of the series.
-    if start is not None:
-        seg = Tp[start:]
-        if seg.size >= min_samples:
-            amps.append(float(np.ptp(seg)))
-            taus.append(seg.size / fs)
-
-    return {"amp": amps, "tau": taus, "count": len(amps)}
+    # Legacy shape: one representative (amplitude, duration) per detected ramp.
+    return {
+        "amp": [abs(float(res.A))] * res.n_ramps,
+        "tau": [float(res.tau)] * res.n_ramps,
+        "count": int(res.n_ramps),
+    }
