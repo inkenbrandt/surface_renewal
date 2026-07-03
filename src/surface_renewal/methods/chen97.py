@@ -182,7 +182,7 @@ def estimate_H_chen(
     Notes
     -----
     - Lags τ are scanned over a bounded window (default 0.2–8 s) to locate τ*
-      using a reproducible rule (e.g., argmax |S3(τ)| / τ).
+      using a reproducible rule (e.g., ``argmax |S3(τ)| / τ``).
     - The uncalibrated scaling uses u* and S3(τ*) with a dimensional form; in
       practice, apply an **alpha** calibration factor at the block level to
       match an EC reference for H.

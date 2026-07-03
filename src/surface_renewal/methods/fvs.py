@@ -95,7 +95,7 @@ def estimate_H_free_convection(
                  \sqrt{\frac{g\, z_m}{T_K}}
 
     Derivation of :math:`c_{fc}`
-    ---------------------------
+    ----------------------------
     Start from the Tillman (1972) flux–variance relation used elsewhere in this
     package, in its free-convection limit (:math:`-\zeta \gg c_2`, so the
     :math:`c_2` offset is negligible):

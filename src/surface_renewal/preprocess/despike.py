@@ -59,7 +59,7 @@ def hampel(
     window : int, default 11
         Odd window length for median / MAD calculation.
     n_sigmas : float, default 3.0
-        Points with |x - median| > n_sigmas * (1.4826 * MAD) are flagged.
+        Points with ``|x - median| > n_sigmas * (1.4826 * MAD)`` are flagged.
         (1.4826 scales MAD to be consistent with the standard deviation for Gaussian data.)
     center : bool, default True
         Center the rolling window on each point (recommended).
@@ -367,8 +367,19 @@ def despike_dataframe(
         Column names to despike (e.g., ["T", "u", "v", "w"]).
     method : {"hampel", "gaussian"}, default "hampel"
         Which detector to use.
-    window, n_sigmas : see :func:`hampel` (used if method="hampel").
-    nw, sig, buffer : see :func:`despike_gaussian` (used if method="gaussian").
+    window : int, default 11
+        Hampel window length (samples); see :func:`hampel`. Used if ``method="hampel"``.
+    n_sigmas : float, default 3.0
+        Hampel MAD threshold multiplier; see :func:`hampel`. Used if ``method="hampel"``.
+    nw : int, default 201
+        Gaussian despiker window (samples); see :func:`despike_gaussian`.
+        Used if ``method="gaussian"``.
+    sig : float, default 4.0
+        Gaussian despiker sigma threshold; see :func:`despike_gaussian`.
+        Used if ``method="gaussian"``.
+    buffer : int, default 3
+        Symmetric buffer (samples) around flagged spikes; see :func:`despike_gaussian`.
+        Used if ``method="gaussian"``.
     timestamps_col : str, optional
         Column in `df` to use as timestamps (1-D numeric). If None, uses index position.
     interpolate : {"linear", "nearest", "cubic"}, optional
@@ -437,7 +448,7 @@ def velocity_temperature_consistency(
     t_abs_limit : (float, float), optional
         Absolute min/max limits for temperature.
     uvw_abs_limit : float, optional
-        Absolute limit for |u|, |v|, or |w|.
+        Absolute limit for ``|u|``, ``|v|``, or ``|w|``.
 
     Returns
     -------

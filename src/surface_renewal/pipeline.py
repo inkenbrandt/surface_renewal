@@ -60,7 +60,7 @@ class PipelineConfig:
     stability_ustar : float, default 0.05
         Minimum u* (m s⁻¹) to accept a block.
     stability_relS3 : float, default 1e-3
-        Minimum |S3(τ*)| / std(T)^3 (dimensionless) to accept a block.
+        Minimum ``|S3(τ*)| / std(T)^3`` (dimensionless) to accept a block.
     stability_stdT : float, default 0.02
         Minimum std(T) (K) to accept a block.
     daytime_only : bool, default False
@@ -442,9 +442,9 @@ def run_surface_renewal(
     -----
     - **Uncalibrated H** is returned by design; pass ``alpha`` (or fit and apply a
       block-scale **alpha** using your reference EC H via
-      `Calibration.from_reference(...).apply(...)`) to obtain calibrated H. :contentReference[oaicite:7]{index=7}
+      `Calibration.from_reference(...).apply(...)`) to obtain calibrated H.
     - Snyder method uses S2/S3/S5 + Cardano cubic recovery; Chen97 uses S3(τ*), u*,
-      and τ* scaling; both follow the implementations in `methods/`. :contentReference[oaicite:8]{index=8} :contentReference[oaicite:9]{index=9}
+      and τ* scaling; both follow the implementations in `methods/`.
     """
     # 0) + 1) Obtain the despiked/rotated frame, reusing a caller-supplied one
     # when available so preprocessing is not repeated across methods.

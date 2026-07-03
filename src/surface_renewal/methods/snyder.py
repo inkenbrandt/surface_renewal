@@ -100,8 +100,7 @@ def recover_ramp(
        (Δt ∈ ``lags_s`` seconds).
     2) Choose Δt* by ``argmax |S3(Δt)| / Δt`` (see
        :func:`surface_renewal.structure.pick_optimal_lag`).
-    3) Form the depressed cubic for **A**:
-           A^3 + p A + q = 0,
+    3) Form the depressed cubic for **A**: ``A^3 + p A + q = 0``,
        with ``p = 10·S2 − (S5/S3)`` and ``q = 10·S3`` (evaluated at Δt*).
     4) Select **A** as the **maximum real root**.
     5) Recover τ from ``τ = − A^3 · Δt* / S3(Δt*)``.
@@ -182,14 +181,11 @@ def estimate_H_snyder(
     Steps (block level)
     -------------------
     1) Compute S2, S3, S5 of temperature across a lag scan (Δt ∈ [0.2, 8] s by default).
-    2) Choose Δt* by a reproducible rule (e.g., argmax |S3(Δt)| / Δt).
-    3) Form the depressed cubic for **A** (ramp amplitude):
-           A^3 + p A + q = 0,
-       with
-           p = 10·S2  −  (S5 / S3),    q = 10·S3    (evaluated at Δt*).
+    2) Choose Δt* by a reproducible rule (e.g., ``argmax |S3(Δt)| / Δt``).
+    3) Form the depressed cubic for **A** (ramp amplitude): ``A^3 + p A + q = 0``,
+       with ``p = 10·S2 − (S5 / S3)`` and ``q = 10·S3`` (evaluated at Δt*).
     4) Select **A** as the **maximum real root**.
-    5) Recover τ from the model relation:
-           τ = − (A^3) · Δt* / S3(Δt*).
+    5) Recover τ from the model relation ``τ = − (A^3) · Δt* / S3(Δt*)``.
     6) Compute H = ρ c_p (A / τ).  (Apply block-scale calibration downstream.)
 
     Parameters

@@ -15,12 +15,12 @@ high-frequency temperature series sampled at `hz` Hz.
 ## Contents
 
 1. [Shared building blocks](#1-shared-building-blocks)
-2. [Snyder (1996) cubic-ramp method](#2-snyder-1996-cubic-ramp-method)
-3. [Chen (1997) method](#3-chen-1997-method)
-4. [Flux–variance similarity (FVS)](#4-fluxvariance-similarity-fvs)
-5. [Free-convection fallback](#5-free-convection-fallback)
-6. [Castellví (2004) calibration-free method](#6-castellví-2004-calibration-free-method)
-7. [Wavelet ramp detection (Collineau & Brunet 1993)](#7-wavelet-ramp-detection-collineau--brunet-1993)
+2. [Snyder (1996) cubic-ramp method](#2-snyder-1996-cubic-ramp-method--methodssnyderpy)
+3. [Chen (1997) method](#3-chen-1997-method--methodschen97py)
+4. [Flux–variance similarity (FVS)](#4-fluxvariance-similarity-fvs--methodsfvspy)
+5. [Free-convection fallback](#5-free-convection-fallback--methodsfvspy)
+6. [Castellví (2004) calibration-free method](#6-castellví-2004-calibration-free-method--methodscastellvipy)
+7. [Wavelet ramp detection (Collineau & Brunet 1993)](#7-wavelet-ramp-detection-collineau--brunet-1993--methodswaveletpy)
 8. [References](#8-references)
 
 ---
@@ -43,7 +43,7 @@ use `S₂`, `S₃`, and `S₅`.
 The optimal lag `Δt*` (equivalently `τ*`) is selected by
 
 $$
-\Delta t^\* = \arg\max_{\Delta t}\ \frac{|S_3(\Delta t)|}{\Delta t},
+\Delta t^* = \arg\max_{\Delta t}\ \frac{|S_3(\Delta t)|}{\Delta t},
 $$
 
 (`pick_optimal_lag`), which emphasises sharp ramps. A negative `S₃(Δt*)` indicates
@@ -150,7 +150,7 @@ with `S₂, S₃, S₅` evaluated at `Δt*`. The cubic is solved in closed form
 real root**. The mean ramp period follows from the model relation
 
 $$
-\tau = -\frac{A^3\, \Delta t^\*}{S_3(\Delta t^\*)}.
+\tau = -\frac{A^3\, \Delta t^*}{S_3(\Delta t^*)}.
 $$
 
 Only a **warming** ramp (`S₃(Δt*) < 0`) yields a positive `τ` under the
@@ -190,7 +190,7 @@ coefficient absorbed later by the `alpha` calibration):
 
 $$
 H = \rho\, c_p\, \beta\, u_*\,
-     \frac{\operatorname{sign}(S_3)\,|S_3(\tau^\*)|^{1/3}}
+     \frac{\operatorname{sign}(S_3)\,|S_3(\tau^*)|^{1/3}}
           {\tau^{\,2/3}}.
 $$
 

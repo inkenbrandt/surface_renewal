@@ -62,6 +62,7 @@ def build_planar_fit_matrix(u: np.ndarray, v: np.ndarray, w: np.ndarray) -> Tupl
     """Build a site/period planar-fit rotation matrix from (u, v, w).
 
     This implements a standard planar-fit approach:
+
     1. Fit a plane ``w = a + b*u + c*v`` via least squares.
     2. The plane's unit normal is proportional to ``n = (b, c, -1)``.
     3. Define the new vertical axis ``k'`` as the plane normal (upward).

@@ -66,7 +66,7 @@ class BlockDiagnostics:
     S3_tau : float
         Third-order temperature structure function evaluated at the optimal lag τ*.
     tau_opt : float
-        Optimal lag τ* (s), typically maximizing |S3(τ)|/τ or an equivalent criterion.
+        Optimal lag τ* (s), typically maximizing ``|S3(τ)|/τ`` or an equivalent criterion.
     stdT : float
         Standard deviation of temperature within the block (K).
     L : float, optional
@@ -209,10 +209,10 @@ def stability_ok(
 
     Criteria (tunable)
     ------------------
-    • u* ≥ `min_ustar`
-    • |S3(τ*)| / std(T)^3 ≥ `min_rel_S3`
-    • std(T) ≥ `min_stdT`
-    • If `daytime_only` and `Rn_block` is provided: Rn_block > 0
+    - u* ≥ `min_ustar`
+    - ``|S3(τ*)| / std(T)^3`` ≥ `min_rel_S3`
+    - std(T) ≥ `min_stdT`
+    - If `daytime_only` and `Rn_block` is provided: Rn_block > 0
 
     Parameters
     ----------
@@ -222,7 +222,7 @@ def stability_ok(
     min_ustar : float, default 0.05
         Minimum friction velocity (m s⁻¹).
     min_rel_S3 : float, default 1e-3
-        Minimum normalized ramp signal strength |S3(τ*)| / std(T)^3 (dimensionless).
+        Minimum normalized ramp signal strength ``|S3(τ*)| / std(T)^3`` (dimensionless).
     min_stdT : float, default 0.02
         Minimum temperature standard deviation (K).
     daytime_only : bool, default False

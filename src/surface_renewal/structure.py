@@ -3,8 +3,8 @@
 
 Notes
 -----
-S_p(Δt) = ⟨ |T(t+Δt) - T(t)|^p ⟩ for even p;
-for odd p we keep the signed moment: ⟨ (T(t+Δt) - T(t))^p ⟩.
+``S_p(Δt) = ⟨ |T(t+Δt) - T(t)|^p ⟩`` for even p;
+for odd p we keep the signed moment: ``⟨ (T(t+Δt) - T(t))^p ⟩``.
 """
 from __future__ import annotations
 import numpy as np
@@ -177,7 +177,7 @@ def estimate_CT2(
 
 
 def pick_optimal_lag(S3: np.ndarray, lags: np.ndarray) -> int:
-    """Return the lag (in samples) maximizing |S3| / lag.
+    """Return the lag (in samples) maximizing ``|S3| / lag``.
 
     This emphasizes sharp ramps and follows common SR practice.
     """

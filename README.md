@@ -11,6 +11,18 @@ periods. Latent heat (LE) is available as an energy-balance residual when `Rn` a
 The mathematics of each method (governing equations, iteration schemes, and the
 full reference list) is documented in [docs/theory.md](docs/theory.md).
 
+## Documentation
+
+Full documentation (installation, quick start, method-selection guide, CLI
+reference, theory, and API reference) lives in [docs/](docs/) and is built with
+Sphinx for [Read the Docs](https://readthedocs.org/) (see
+[.readthedocs.yaml](.readthedocs.yaml)). Build it locally with:
+
+```bash
+pip install -r docs/requirements.txt
+sphinx-build -b html docs docs/_build/html
+```
+
 ## Quick start
 
 ```python

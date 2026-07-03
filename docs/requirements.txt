@@ -1,0 +1,4 @@
+# Documentation build requirements (see .readthedocs.yaml).
+sphinx>=7.0
+sphinx-rtd-theme>=2.0
+myst-parser>=3.0
